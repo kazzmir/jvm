@@ -80,6 +80,19 @@ fn read_u16_bigendian(file: &mut std::fs::File) -> u16 {
     u16::from_be_bytes(buf)
 }
 
+fn read_u8(file: &mut std::fs::File) -> u8 {
+    let mut buf = [0; 1];
+    file.read_exact(&mut buf).unwrap();
+    u8::from_be_bytes(buf)
+}
+
+const CONSTANT_Classref:u8 = 7;
+const CONSTANT_Methodref:u8 = 10;
+const CONSTANT_NameAndType:u8 = 12;
+const CONSTANT_Utf8:u8 = 1;
+const CONSTANT_Fieldref:u8 = 9;
+const CONSTANT_String:u8 = 8;
+
 // jvm class specification
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-4.html
 fn parse_class_file(filename: &str) {
@@ -112,13 +125,89 @@ fn parse_class_file(filename: &str) {
             jvm_class_file.major_version = read_u16_bigendian(&mut file);
             jvm_class_file.constant_pool_count = read_u16_bigendian(&mut file);
 
+            println!("Reading constants {0}", jvm_class_file.constant_pool_count);
+            for _i in 0..jvm_class_file.constant_pool_count - 1 {
+                let mut constant_pool_info = ConstantPoolInfo {
+                    tag: 0,
+                    info: Vec::new(),
+                };
+                constant_pool_info.tag = read_u8(&mut file);
+                println!("Read constant tag {0}", constant_pool_info.tag);
+                match constant_pool_info.tag {
+                    CONSTANT_Classref => {
+                        // name index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                    },
+                    CONSTANT_Methodref => {
+                        // class index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        // name and type index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                    },
+                    CONSTANT_Utf8 => {
+                        // length
+                        // constant_pool_info.info.push(read_u8(&mut file));
+                        // constant_pool_info.info.push(read_u8(&mut file));
+                        let length = read_u16_bigendian(&mut file);
+                        // bytes
+                        // let length = (constant_pool_info.info[0] as u16) << 8 | constant_pool_info.info[1] as u16;
+                        for _i in 0..length {
+                            constant_pool_info.info.push(read_u8(&mut file));
+                        }
+                    },
+                    CONSTANT_String => {
+                        // string index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                    },
+                    CONSTANT_Fieldref => {
+                        // class index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        // name and type index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                    },
+                    CONSTANT_NameAndType => {
+                        // name index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        // descriptor index
+                        constant_pool_info.info.push(read_u8(&mut file));
+                        constant_pool_info.info.push(read_u8(&mut file));
+                    },
+                    _ => {
+                        println!("ERROR: Unhandled constant tag {0}", constant_pool_info.tag);
+                    }
+                }
+                // constant_pool_info.info = read_u8(&mut file);
+                jvm_class_file.constant_pool.push(constant_pool_info);
+            }
+
             jvm_class_file.access_flags = read_u16_bigendian(&mut file);
             jvm_class_file.this_class = read_u16_bigendian(&mut file);
             jvm_class_file.super_class = read_u16_bigendian(&mut file);
             jvm_class_file.interfaces_count = read_u16_bigendian(&mut file);
 
+            // read interfaces_count number of u16 and put them the interfaces vec
+            for _i in 0..jvm_class_file.interfaces_count {
+                jvm_class_file.interfaces.push(read_u16_bigendian(&mut file));
+            }
+
+            jvm_class_file.fields_count = read_u16_bigendian(&mut file);
+            jvm_class_file.methods_count = read_u16_bigendian(&mut file);
+            jvm_class_file.attributes_count = read_u16_bigendian(&mut file);
+
             println!("Magic: 0x{0:x}", jvm_class_file.magic);
             println!("Version: {0}.{1}", jvm_class_file.major_version, jvm_class_file.minor_version);
+            println!("Constant pool: {0}", jvm_class_file.constant_pool_count);
+            println!("Access flags: 0x{0:X}", jvm_class_file.access_flags);
+            println!("Interfaces: {0}", jvm_class_file.interfaces_count);
+            println!("Fields: {0}", jvm_class_file.fields_count);
+            println!("Methods: {0}", jvm_class_file.methods_count);
         },
         Err(error) => println!("Error opening file: {error}")
     }
