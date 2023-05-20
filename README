@@ -1,0 +1,9 @@
+TODO:
+* read .class files
+* .class verification
+* primitive interpreter
+* primitive garbage collection
+* JIT jvm bytecode to register based x86 machine
+* graphics/GUI. swing implementation?
+
+DONE:
