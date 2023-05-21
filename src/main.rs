@@ -32,7 +32,6 @@ struct FieldInfo {
     access_flags: u16,
     name_index: u16,
     descriptor_index: u16,
-    attributes_count: u16,
     attributes: Vec<AttributeInfo>,
 }
 
@@ -40,7 +39,6 @@ struct MethodInfo {
     access_flags: u16,
     name_index: u16,
     descriptor_index: u16,
-    attributes_count: u16,
     attributes: Vec<AttributeInfo>,
 }
 
@@ -117,6 +115,25 @@ fn read_attribute(file: &mut std::fs::File) -> Result<AttributeInfo, std::io::Er
     });
 
     // return Err(std::io::Error::new(std::io::ErrorKind::Other, "Not implemented"));
+}
+
+fn read_field(file: &mut std::fs::File) -> Result<FieldInfo, std::io::Error> {
+    let access_flags = read_u16_bigendian(file);
+    let name_index = read_u16_bigendian(file);
+    let descriptor_index = read_u16_bigendian(file);
+    let attributes_count = read_u16_bigendian(file);
+
+    let mut attributes = Vec::new();
+    for _i in 0..attributes_count {
+        attributes.push(read_attribute(file)?);
+    }
+
+    return Ok(FieldInfo{
+        access_flags: access_flags,
+        name_index: name_index,
+        descriptor_index: descriptor_index,
+        attributes: attributes,
+    });
 }
 
 // jvm class specification
@@ -265,6 +282,11 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
             }
 
             jvm_class_file.fields_count = read_u16_bigendian(&mut file);
+
+            for _i in 0..jvm_class_file.fields_count {
+                jvm_class_file.fields.push(read_field(&mut file)?);
+            }
+
             jvm_class_file.methods_count = read_u16_bigendian(&mut file);
 
             for _i in 0..jvm_class_file.methods_count {
@@ -283,7 +305,6 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
                     access_flags: access_flags,
                     name_index: name_index,
                     descriptor_index: descriptor_index,
-                    attributes_count: attributes_count,
                     attributes: attributes,
                 };
 
