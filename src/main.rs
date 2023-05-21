@@ -1,5 +1,5 @@
 use std::env;
-use std::io::Read;
+use std::io::{Read, BufReader};
 
 /*
 ClassFile {
@@ -49,12 +49,21 @@ struct AttributeInfo {
     info: Vec<u8>,
 }
 
+enum ConstantPool {
+    Classref(u16),
+    Methodref(u16, u16),
+    NameAndType(u16, u16),
+    Utf8(String),
+    Fieldref(u16, u16),
+    Stringref(u16),
+}
+
 struct JVMClassFile {
     magic: u32,
     minor_version: u16,
     major_version: u16,
     constant_pool_count: u16,
-    constant_pool: Vec<ConstantPoolInfo>,
+    constant_pool: Vec<ConstantPool>,
     access_flags: u16,
     this_class: u16,
     super_class: u16,
@@ -95,7 +104,7 @@ const CONSTANT_String:u8 = 8;
 
 // jvm class specification
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-4.html
-fn parse_class_file(filename: &str) {
+fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
     println!("Parsing file: {}", filename);
     // open filename as binary
 
@@ -127,26 +136,27 @@ fn parse_class_file(filename: &str) {
 
             println!("Reading constants {0}", jvm_class_file.constant_pool_count);
             for _i in 0..jvm_class_file.constant_pool_count - 1 {
+                /*
                 let mut constant_pool_info = ConstantPoolInfo {
                     tag: 0,
                     info: Vec::new(),
                 };
-                constant_pool_info.tag = read_u8(&mut file);
-                println!("Read constant tag {0}", constant_pool_info.tag);
-                match constant_pool_info.tag {
+                */
+                let tag = read_u8(&mut file);
+                // println!("Read constant tag {0}", tag);
+                match tag {
                     CONSTANT_Classref => {
                         // name index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let name = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPool::Classref(name));
                     },
                     CONSTANT_Methodref => {
                         // class index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        // name and type index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let class = read_u16_bigendian(&mut file);
+                        let name_and_type = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPool::Methodref(class, name_and_type));
                     },
+
                     CONSTANT_Utf8 => {
                         // length
                         // constant_pool_info.info.push(read_u8(&mut file));
@@ -154,37 +164,77 @@ fn parse_class_file(filename: &str) {
                         let length = read_u16_bigendian(&mut file);
                         // bytes
                         // let length = (constant_pool_info.info[0] as u16) << 8 | constant_pool_info.info[1] as u16;
+                        /*
                         for _i in 0..length {
                             constant_pool_info.info.push(read_u8(&mut file));
                         }
+                        */
+
+                        // read length bytes from file
+                        let result = String::from_utf8((&file).bytes().take(length as usize).map(|r| r.unwrap()).collect::<Vec<_>>());
+                        match result {
+                            Ok(s) => {
+                                // println!("Read utf8 string '{}'", s);
+                                jvm_class_file.constant_pool.push(ConstantPool::Utf8(s));
+                            }
+                            Err(err) => return Err(std::io::Error::new(std::io::ErrorKind::Other, err))
+                        }
+
+                        /*
+                        match
+                            Ok(s) => {
+                            }
+                            Err(std::string::FromUtf8Error) => {
+                                println!("ERROR: could not read utf8 string: {}", err);
+                                return Err(err)
+                            }
+                        }
+                        */
+
+                        /*
+                        let bytes = file.bytes().take(length as usize);
+                        let reader: Box<dyn Read> = Box::new(bytes);
+                        let bufreader = BufReader::new(reader);
+                        let mut buffer = String::new();
+                        bufreader.read_to_string(&mut buffer);
+                        */
+
+                        /*
+                        match bytes.collect::<Vec<_>>() {
+                            Ok(data) => {
+                                jvm_class_file.constant_pool.push(ConstantPool::Utf8(String::from_utf8(data).unwrap()));
+                            },
+                            Error => {
+                                println!("ERROR: reading utf8 string");
+                            }
+                        }
+                        */
                     },
                     CONSTANT_String => {
                         // string index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let index = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPool::Stringref(index));
                     },
                     CONSTANT_Fieldref => {
                         // class index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let class = read_u16_bigendian(&mut file);
                         // name and type index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let name_and_type = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPool::Fieldref(class, name_and_type));
                     },
                     CONSTANT_NameAndType => {
                         // name index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let name = read_u16_bigendian(&mut file);
                         // descriptor index
-                        constant_pool_info.info.push(read_u8(&mut file));
-                        constant_pool_info.info.push(read_u8(&mut file));
+                        let descriptor = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPool::NameAndType(name, descriptor));
                     },
                     _ => {
-                        println!("ERROR: Unhandled constant tag {0}", constant_pool_info.tag);
+                        println!("ERROR: Unhandled constant tag {0}", tag);
                     }
                 }
                 // constant_pool_info.info = read_u8(&mut file);
-                jvm_class_file.constant_pool.push(constant_pool_info);
+                // jvm_class_file.constant_pool.push(constant_pool_info);
             }
 
             jvm_class_file.access_flags = read_u16_bigendian(&mut file);
@@ -208,8 +258,13 @@ fn parse_class_file(filename: &str) {
             println!("Interfaces: {0}", jvm_class_file.interfaces_count);
             println!("Fields: {0}", jvm_class_file.fields_count);
             println!("Methods: {0}", jvm_class_file.methods_count);
+
+            return Ok(jvm_class_file)
         },
-        Err(error) => println!("Error opening file: {error}")
+        Err(error) => {
+            println!("Error opening file: {error}");
+            return Err(error);
+        }
     }
 }
 
