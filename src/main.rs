@@ -1,5 +1,6 @@
 use std::env;
-use std::io::{Read, BufReader};
+// use std::io::{Read, BufReader};
+use std::io::{Read};
 
 /*
 ClassFile {
@@ -101,6 +102,22 @@ const CONSTANT_NameAndType:u8 = 12;
 const CONSTANT_Utf8:u8 = 1;
 const CONSTANT_Fieldref:u8 = 9;
 const CONSTANT_String:u8 = 8;
+
+fn read_attribute(file: &mut std::fs::File) -> Result<AttributeInfo, std::io::Error> {
+
+    let name_index = read_u16_bigendian(file);
+    let length = read_u32_bigendian(file);
+
+    let result = file.bytes().take(length as usize).map(|r| r.unwrap()).collect::<Vec<_>>();
+
+    return Ok(AttributeInfo{
+        attribute_name_index: name_index,
+        attribute_length: length,
+        info: result,
+    });
+
+    // return Err(std::io::Error::new(std::io::ErrorKind::Other, "Not implemented"));
+}
 
 // jvm class specification
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-4.html
@@ -249,7 +266,36 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
 
             jvm_class_file.fields_count = read_u16_bigendian(&mut file);
             jvm_class_file.methods_count = read_u16_bigendian(&mut file);
+
+            for _i in 0..jvm_class_file.methods_count {
+                let access_flags = read_u16_bigendian(&mut file);
+                let name_index = read_u16_bigendian(&mut file);
+                let descriptor_index = read_u16_bigendian(&mut file);
+                let attributes_count = read_u16_bigendian(&mut file);
+
+                let mut attributes:Vec<AttributeInfo> = Vec::new();
+
+                for _j in 0..attributes_count {
+                    attributes.push(read_attribute(&mut file)?);
+                }
+
+                let method = MethodInfo {
+                    access_flags: access_flags,
+                    name_index: name_index,
+                    descriptor_index: descriptor_index,
+                    attributes_count: attributes_count,
+                    attributes: attributes,
+                };
+
+                jvm_class_file.methods.push(method);
+            }
+
             jvm_class_file.attributes_count = read_u16_bigendian(&mut file);
+
+            for _i in 0..jvm_class_file.attributes_count {
+                println!("Reading class attribute");
+                jvm_class_file.attributes.push(read_attribute(&mut file)?);
+            }
 
             println!("Magic: 0x{0:x}", jvm_class_file.magic);
             println!("Version: {0}.{1}", jvm_class_file.major_version, jvm_class_file.minor_version);
