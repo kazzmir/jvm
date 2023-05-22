@@ -44,7 +44,6 @@ struct MethodInfo {
 
 struct AttributeInfo {
     attribute_name_index: u16,
-    attribute_length: u32,
     info: Vec<u8>,
 }
 
@@ -55,6 +54,19 @@ enum ConstantPool {
     Utf8(String),
     Fieldref(u16, u16),
     Stringref(u16),
+}
+
+impl ConstantPool {
+    fn name(&self) -> &str {
+        return match self {
+            ConstantPool::Classref(_) => "Classref",
+            ConstantPool::Methodref(_, _) => "Methodref",
+            ConstantPool::NameAndType(_, _) => "NameAndType",
+            ConstantPool::Utf8(_) => "Utf8",
+            ConstantPool::Fieldref(_, _) => "Fieldref",
+            ConstantPool::Stringref(_) => "Stringref",
+        }
+    }
 }
 
 struct JVMClassFile {
@@ -70,7 +82,6 @@ struct JVMClassFile {
     interfaces: Vec<u16>,
     fields_count: u16,
     fields: Vec<FieldInfo>,
-    methods_count: u16,
     methods: Vec<MethodInfo>,
     attributes_count: u16,
     attributes: Vec<AttributeInfo>,
@@ -110,7 +121,6 @@ fn read_attribute(file: &mut std::fs::File) -> Result<AttributeInfo, std::io::Er
 
     return Ok(AttributeInfo{
         attribute_name_index: name_index,
-        attribute_length: length,
         info: result,
     });
 
@@ -158,7 +168,6 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
                 interfaces: Vec::new(),
                 fields_count: 0,
                 fields: Vec::new(),
-                methods_count: 0,
                 methods: Vec::new(),
                 attributes_count: 0,
                 attributes: Vec::new(),
@@ -264,7 +273,7 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
                         jvm_class_file.constant_pool.push(ConstantPool::NameAndType(name, descriptor));
                     },
                     _ => {
-                        println!("ERROR: Unhandled constant tag {0}", tag);
+                        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Unhandled constant tag"));
                     }
                 }
                 // constant_pool_info.info = read_u8(&mut file);
@@ -287,13 +296,15 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
                 jvm_class_file.fields.push(read_field(&mut file)?);
             }
 
-            jvm_class_file.methods_count = read_u16_bigendian(&mut file);
+            let methods_count = read_u16_bigendian(&mut file);
 
-            for _i in 0..jvm_class_file.methods_count {
+            for _i in 0..methods_count {
                 let access_flags = read_u16_bigendian(&mut file);
                 let name_index = read_u16_bigendian(&mut file);
                 let descriptor_index = read_u16_bigendian(&mut file);
                 let attributes_count = read_u16_bigendian(&mut file);
+
+                println!("Method access flags 0x{:x}", access_flags);
 
                 let mut attributes:Vec<AttributeInfo> = Vec::new();
 
@@ -324,13 +335,93 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
             println!("Access flags: 0x{0:X}", jvm_class_file.access_flags);
             println!("Interfaces: {0}", jvm_class_file.interfaces_count);
             println!("Fields: {0}", jvm_class_file.fields_count);
-            println!("Methods: {0}", jvm_class_file.methods_count);
+            println!("Methods: {0}", methods_count);
+
+            for i in 0..jvm_class_file.fields_count {
+                println!("Field {}", i);
+                let name = lookup_utf8_constant(&jvm_class_file, jvm_class_file.fields[i as usize].name_index as usize);
+                match name {
+                    Some(name) => {
+                        println!("  name={}", name);
+                    },
+                    None => {
+                        println!("  name=unknown");
+                    }
+                }
+                let descriptor = lookup_utf8_constant(&jvm_class_file, jvm_class_file.fields[i as usize].descriptor_index as usize);
+                match descriptor {
+                    Some(descriptor) => {
+                        println!("  descriptor={}", descriptor);
+                    },
+                    None => {
+                        println!("  descriptor=unknown");
+                    }
+                }
+            }
 
             return Ok(jvm_class_file)
         },
         Err(error) => {
-            println!("Error opening file: {error}");
             return Err(error);
+        }
+    }
+}
+
+fn lookup_utf8_constant(jvm: &JVMClassFile, constant_index: usize) -> Option<String> {
+    if constant_index >= 1 && constant_index <= jvm.constant_pool.len() {
+        // println!("Matching constant pool index {} = {}", constant_index, jvm.constant_pool[constant_index].name());
+        match &jvm.constant_pool[constant_index-1] {
+            ConstantPool::Utf8(name) => {
+                return Some(name.clone());
+            },
+            _ => {
+                println!("Invalid utf8, was {}", jvm.constant_pool[constant_index-1].name());
+                // println!("ERROR: constant index {} is not a utf8 string", constant_index);
+            }
+        }
+    }
+
+    return None
+}
+
+fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<String>{
+    if method_index < jvm.methods.len() {
+        let method = &jvm.methods[method_index];
+        let name_index = method.name_index as usize;
+
+        match lookup_utf8_constant(&jvm, jvm.methods[method_index].descriptor_index as usize) {
+            Some(name) => {
+                println!("method {} descriptor {}", method_index, name);
+            },
+            None => {
+            }
+        }
+
+        return lookup_utf8_constant(jvm, name_index)
+    }
+
+    return None
+}
+
+fn execute_method(jvm: &JVMClassFile, name: &str){
+    // find method named 'name'
+    // start executing byte code at that method
+
+    for i in 0..jvm.methods.len() {
+        match lookup_utf8_constant(jvm, jvm.methods[i].descriptor_index as usize) {
+            Some(descriptor_name) => {
+                println!("Method {} descriptor {}", i, descriptor_name);
+            },
+            None => {
+                println!("Error: method {} descriptor index {} is invalid", i, jvm.methods[i].descriptor_index);
+            }
+        }
+        match lookup_utf8_constant(jvm, jvm.methods[i].name_index as usize) {
+            Some(method_name) => {
+                println!("Check method index={} name='{}' vs '{}'", i, method_name, name)
+            },
+            None => {
+            }
         }
     }
 }
@@ -345,6 +436,13 @@ fn main() {
     */
     // print just the first argument out, but only if there is at least one argument
     if args.len() > 1 {
-        parse_class_file(args[1].as_str());
+        match parse_class_file(args[1].as_str()) {
+            Ok(class_file) => {
+                execute_method(&class_file, "Hello.main");
+            },
+            Err(err) => {
+                println!("Error: {0}", err);
+            }
+        }
     }
 }
