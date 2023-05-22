@@ -54,7 +54,7 @@ enum ConstantPoolEntry {
     Methodref(u16, u16),
     NameAndType{name_index:u16, descriptor_index:u16},
     Utf8(String),
-    Fieldref(u16, u16),
+    Fieldref{class_index:u16, name_and_type_index:u16},
     Stringref(u16),
 }
 
@@ -65,7 +65,7 @@ impl ConstantPoolEntry {
             ConstantPoolEntry::Methodref(_, _) => "Methodref",
             ConstantPoolEntry::NameAndType{..} => "NameAndType",
             ConstantPoolEntry::Utf8(_) => "Utf8",
-            ConstantPoolEntry::Fieldref(_, _) => "Fieldref",
+            ConstantPoolEntry::Fieldref{..} => "Fieldref",
             ConstantPoolEntry::Stringref(_) => "Stringref",
         }
     }
@@ -381,7 +381,7 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
                         let class = read_u16_bigendian(&mut file);
                         // name and type index
                         let name_and_type = read_u16_bigendian(&mut file);
-                        jvm_class_file.constant_pool.push(ConstantPoolEntry::Fieldref(class, name_and_type));
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::Fieldref{class_index:class, name_and_type_index:name_and_type});
                     },
                     CONSTANT_NameAndType => {
                         // name index
@@ -487,17 +487,19 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
 }
 
 fn lookup_utf8_constant(constant_pool: &ConstantPool, constant_index: usize) -> Option<&str> {
-    if constant_index >= 1 && constant_index <= constant_pool.len() {
-        // println!("Matching constant pool index {} = {}", constant_index, jvm.constant_pool[constant_index].name());
-        match &constant_pool[constant_index-1] {
-            ConstantPoolEntry::Utf8(name) => {
-                return Some(name);
-            },
-            _ => {
-                println!("Invalid utf8, was {}", constant_pool[constant_index-1].name());
-                // println!("ERROR: constant index {} is not a utf8 string", constant_index);
-            }
+    match constant_pool_lookup(constant_pool, constant_index) {
+        Some(ConstantPoolEntry::Utf8(name)) => {
+            return Some(name);
         }
+        _ => {
+            return None;
+        }
+    }
+}
+
+fn constant_pool_lookup(constant_pool: &ConstantPool, constant_index: usize) -> Option<&ConstantPoolEntry> {
+    if constant_index >= 1 && constant_index <= constant_pool.len() {
+        return Some(&constant_pool[constant_index-1]);
     }
 
     return None
@@ -507,21 +509,131 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
     if method_index < jvm.methods.len() {
         let method = &jvm.methods[method_index];
         let name_index = method.name_index as usize;
-
-        /*
-        match lookup_utf8_constant(&jvm.constant_pool, jvm.methods[method_index].descriptor_index as usize) {
-            Some(name) => {
-                println!("method {} descriptor {}", method_index, name);
-            },
-            None => {
-            }
-        }
-        */
-
         return lookup_utf8_constant(&jvm.constant_pool, name_index)
     }
 
     return None
+}
+
+// https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
+mod Opcodes {
+    pub const GetStatic:u8 = 0xb2; // getstatic
+    pub const PushRuntimeConstant:u8 = 0x12; // ldc
+}
+
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool){
+    for i in 0..method.attributes.len() {
+        match &method.attributes[i] {
+            AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
+                println!("Code attribute");
+                println!("  max_stack={}", max_stack);
+                println!("  max_locals={}", max_locals);
+                println!("  code={}", code.len());
+                println!("  exception_table={}", exception_table.len());
+                println!("  attributes={}", attributes.len());
+
+                let mut pc = 0;
+                for _i in 0..2 {
+                    // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
+                    match code[pc] {
+                        Opcodes::GetStatic => {
+                            println!("Get static");
+                            let b1 = code[pc+1] as usize;
+                            let b2 = code[pc+2] as usize;
+                            let total = (b1 << 8) | b2;
+
+                            match constant_pool_lookup(constant_pool, total) {
+                                Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
+                                    println!("  class={}", class_index);
+                                    println!("  name_and_type={}", name_and_type_index);
+
+                                    match constant_pool_lookup(constant_pool, *class_index as usize) {
+                                        Some(ConstantPoolEntry::Classref(index)) => {
+                                            println!("  classref={}", index);
+                                            match lookup_utf8_constant(constant_pool, *index as usize) {
+                                                Some(class_name) => {
+                                                    println!("  class_name={}", class_name);
+
+                                                    match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                                                        Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                                                            println!("  name_index={}", name_index);
+                                                            println!("  descriptor_index={}", descriptor_index);
+
+                                                            match lookup_utf8_constant(constant_pool, *name_index as usize) {
+                                                                Some(name) => {
+                                                                    println!("  name={}", name);
+                                                                },
+                                                                None => {
+                                                                    println!("  Unknown name index {}", *name_index);
+                                                                }
+                                                            }
+
+                                                            match lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
+                                                                Some(descriptor) => {
+                                                                    println!("  descriptor={}", descriptor);
+                                                                },
+                                                                None => {
+                                                                    println!("  Unknown descriptor index {}", *descriptor_index);
+                                                                }
+                                                            }
+                                                        },
+                                                        _ => {
+                                                            println!("  Unknown name and type index {}", *name_and_type_index);
+                                                        }
+                                                    }
+
+                                                },
+                                                _ => {
+                                                    println!("  Unknown classref {}", *index);
+                                                }
+                                            }
+                                        },
+                                        _ => {
+                                            println!("  Unknown classref {}", class_index);
+                                        }
+                                    }
+
+                                },
+                                Some(entry) => {
+                                    println!("  {}", entry.name());
+                                },
+                                None => {
+                                    println!("  Unknown constant pool entry {}", total);
+                                }
+                            }
+
+                            pc += 3;
+                        },
+                        Opcodes::PushRuntimeConstant => {
+                            let index = code[pc+1] as usize;
+                            if index > 0 && index < constant_pool.len() {
+                                match &constant_pool[index-1] {
+                                    ConstantPoolEntry::Utf8(name) => {
+                                        println!("Pushing constant {}", name);
+                                    },
+                                    ConstantPoolEntry::Stringref(index) => {
+                                        println!("Pushing constant {}", index);
+                                    },
+                                    _ => {
+                                        println!("ERROR: unhandled constant {}", &constant_pool[index-1].name());
+                                    }
+                                }
+                            } else {
+                                println!("ERROR: constant index {} is invalid", index);
+                            }
+                        },
+                        _ => {
+                            println!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]);
+                            pc += 1;
+                        }
+                    }
+                }
+
+            },
+            _ => {
+            }
+        }
+    }
 }
 
 fn execute_method(jvm: &JVMClassFile, name: &str){
@@ -543,6 +655,7 @@ fn execute_method(jvm: &JVMClassFile, name: &str){
             Some(method_name) => {
                 println!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
+                    do_execute_method(&jvm.methods[i], &jvm.constant_pool);
                 }
             },
             None => {
