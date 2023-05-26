@@ -533,6 +533,17 @@ enum RuntimeValue{
     Object(Box<JVMObject>),
 }
 
+enum JVMMethod{
+    Native(fn(&RuntimeValue)),
+    Bytecode(MethodInfo),
+}
+
+struct JVMClass{
+    class: String,
+    methods: HashMap<String, JVMMethod>,
+    fields: HashMap<String, RuntimeValue>,
+}
+
 struct JVMObject{
     class: String,
     fields: HashMap<String, RuntimeValue>,
@@ -550,12 +561,16 @@ impl Clone for JVMObject {
 struct Runtime {
     stack: Vec<RuntimeValue>,
     locals: Vec<RuntimeValue>,
-    classes: HashMap<String, JVMObject>,
+    classes: HashMap<String, JVMClass>,
 }
 
 impl Runtime {
-    fn lookup_class(self: &Runtime, class_name: &str) -> Option<&JVMObject> {
+    fn lookup_class(self: &Runtime, class_name: &str) -> Option<&JVMClass> {
         return self.classes.get(class_name);
+    }
+
+    fn as_ref(self: &mut Runtime) -> &mut Runtime {
+        return self
     }
 
     fn push_value(self: &mut Runtime, value: RuntimeValue) {
@@ -709,6 +724,32 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                                                                     match runtime.pop_value() {
                                                                         Some(RuntimeValue::Object(object)) => {
                                                                             println!("  popped object class '{}'", object.class);
+
+                                                                            match runtime.lookup_class(class_name){
+                                                                                Some(class) => {
+                                                                                    match class.methods.get(name) {
+                                                                                        Some(method) => {
+                                                                                            match method {
+                                                                                                JVMMethod::Native(f) => {
+                                                                                                    println!("invoke native method");
+                                                                                                    f(&arg)
+                                                                                                },
+                                                                                                JVMMethod::Bytecode(info) => {
+                                                                                                    println!("invoke bytecode method");
+                                                                                                    // do_execute_method(info, constant_pool, runtime);
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        None => {
+                                                                                            println!("  Unknown method {}", name);
+                                                                                        }
+                                                                                    }
+                                                                                },
+                                                                                _ => {
+                                                                                    println!("could not find class with name {}", class_name);
+                                                                                }
+                                                                            }
+
                                                                         },
                                                                         None => {
                                                                             println!("  No value on stack");
@@ -801,13 +842,38 @@ fn createStdoutObject() -> Box<JVMObject> {
     });
 }
 
-fn createJavaLangSystem() -> JVMObject {
+fn createJavaIoPrintStream() -> JVMClass {
+    let mut methods = HashMap::new();
+    methods.insert("println".to_string(), JVMMethod::Native(|arg: &RuntimeValue| {
+        match arg {
+            RuntimeValue::String(s) => {
+                println!("{}", s);
+            },
+            _ => {
+                println!("Unknown value type for println");
+            }
+        }
+    }));
+
+    let fields = HashMap::new();
+
+    return JVMClass{
+        class: "java/io/PrintStream".to_string(),
+        methods: methods,
+        fields: fields,
+    }
+}
+
+fn createJavaLangSystem() -> JVMClass {
     let mut fields = HashMap::new();
 
     fields.insert("out".to_string(), RuntimeValue::Object(createStdoutObject()));
 
-    return JVMObject{
+    let mut methods = HashMap::new();
+
+    return JVMClass{
         class: "java/lang/System".to_string(),
+        methods: methods,
         fields: fields
     };
 }
@@ -816,6 +882,7 @@ fn createRuntime() -> Runtime {
     let mut classes = HashMap::new();
 
     classes.insert("java/lang/System".to_string(), createJavaLangSystem());
+    classes.insert("java/io/PrintStream".to_string(), createJavaIoPrintStream());
 
     return Runtime{
         stack: Vec::new(),
