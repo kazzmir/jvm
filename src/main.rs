@@ -520,6 +520,7 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
 mod Opcodes {
     pub const GetStatic:u8 = 0xb2; // getstatic
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
+    pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
 }
 
 #[derive(Clone)]
@@ -529,7 +530,7 @@ enum RuntimeValue{
     Float(f32),
     Double(f64),
     String(String),
-    Object(JVMObject),
+    Object(Box<JVMObject>),
 }
 
 struct JVMObject{
@@ -564,9 +565,20 @@ impl Runtime {
     fn pop_value(self: &mut Runtime) -> Option<RuntimeValue> {
         return self.stack.pop();
     }
+
+    fn pop_value_force(self: &mut Runtime) -> Result<RuntimeValue, String> {
+        match self.stack.pop() {
+            Some(value) => {
+                return Ok(value);
+            },
+            None => {
+                return Err("Stack underflow".to_string());
+            }
+        }
+    }
 }
 
-fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime){
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime) -> Result<(), String> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
             AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
@@ -578,7 +590,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                 println!("  attributes={}", attributes.len());
 
                 let mut pc = 0;
-                for _i in 0..2 {
+                while pc < code.len() {
                     // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
                     match code[pc] {
                         Opcodes::GetStatic => {
@@ -667,6 +679,73 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
 
                             pc += 3;
                         },
+                        Opcodes::InvokeVirtual => {
+                            let b1 = code[pc+1] as usize;
+                            let b2 = code[pc+2] as usize;
+                            let total = (b1 << 8) | b2;
+
+                            pc += 2;
+
+                            // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
+
+                            match constant_pool_lookup(constant_pool, total) {
+                                Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
+                                    match constant_pool_lookup(constant_pool, *class_index as usize) {
+                                        Some(ConstantPoolEntry::Classref(class_index)) => {
+                                            match constant_pool_lookup(constant_pool, *class_index as usize) {
+                                                Some(ConstantPoolEntry::Utf8(class_name)) => {
+                                                    println!("Invoke method on class {}", class_name);
+
+                                                    match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                                                        Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                                                            match constant_pool_lookup(constant_pool, *name_index as usize) {
+                                                                Some(ConstantPoolEntry::Utf8(name)) => {
+                                                                    println!("  method name={}", name);
+
+                                                                    /* have to pop N values from the stack, one for each parameter */
+
+                                                                    let arg = runtime.pop_value_force()?;
+
+                                                                    match runtime.pop_value() {
+                                                                        Some(RuntimeValue::Object(object)) => {
+                                                                            println!("  popped object class '{}'", object.class);
+                                                                        },
+                                                                        None => {
+                                                                            println!("  No value on stack");
+                                                                        }
+                                                                        _ => {
+                                                                            println!("  wrong value type on stack");
+                                                                        }
+                                                                    }
+                                                                },
+                                                                _ => {
+                                                                    println!("  Unknown name index {}", *name_index);
+                                                                }
+                                                            }
+                                                        },
+                                                        _ => {
+                                                            println!("Unknown name and type index {}", *name_and_type_index);
+                                                        }
+                                                    }
+
+                                                },
+                                                _ => {
+                                                    println!("Unknown class index {}", class_index);
+                                                }
+                                            }
+                                        },
+                                        _ => {
+                                            println!("Unknown class index {}", class_index);
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    println!("Unknown method index {}", total);
+                                }
+                            }
+
+                            pc += 1;
+                        },
                         Opcodes::PushRuntimeConstant => {
                             let index = code[pc+1] as usize;
                             if index > 0 && index < constant_pool.len() {
@@ -696,6 +775,8 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                             } else {
                                 println!("ERROR: constant index {} is invalid", index);
                             }
+
+                            pc += 2;
                         },
                         _ => {
                             println!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]);
@@ -709,13 +790,15 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
             }
         }
     }
+
+    return Ok(());
 }
 
-fn createStdoutObject() -> JVMObject {
-    return JVMObject{
+fn createStdoutObject() -> Box<JVMObject> {
+    return Box::new(JVMObject{
         class: "java/io/PrintStream".to_string(),
         fields: HashMap::new()
-    };
+    });
 }
 
 fn createJavaLangSystem() -> JVMObject {
@@ -741,7 +824,7 @@ fn createRuntime() -> Runtime {
     }
 }
 
-fn execute_method(jvm: &JVMClassFile, name: &str){
+fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
     // find method named 'name'
     // start executing byte code at that method
 
@@ -763,13 +846,16 @@ fn execute_method(jvm: &JVMClassFile, name: &str){
 
                     let mut runtime = createRuntime();
 
-                    do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut runtime);
+                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut runtime);
                 }
             },
             None => {
+                return Err("Error: method name index is invalid".to_string());
             }
         }
     }
+
+    return Err("no such method found".to_string());
 }
 
 fn main() {
@@ -784,7 +870,13 @@ fn main() {
     if args.len() > 1 {
         match parse_class_file(args[1].as_str()) {
             Ok(class_file) => {
-                execute_method(&class_file, "main");
+                match execute_method(&class_file, "main") {
+                    Ok(_) => {
+                    },
+                    Err(err) => {
+                        println!("Error: {0}", err);
+                    }
+                }
             },
             Err(err) => {
                 println!("Error: {0}", err);
