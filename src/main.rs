@@ -561,29 +561,19 @@ impl Clone for JVMObject {
 struct Runtime {
     stack: Vec<RuntimeValue>,
     locals: Vec<RuntimeValue>,
+}
+
+struct RuntimeConst {
     classes: HashMap<String, JVMClass>,
 }
 
-impl Runtime {
-    fn lookup_class(self: &Runtime, class_name: &str) -> Option<&JVMClass> {
-        match self.classes.get(class_name) {
-            Some(b) => {
-                /*
-                match *b {
-                    obj => {
-                        return Some(Box::new(obj));
-                    }
-                }
-                */
-                return Some(b);
-                // return Some(Box::new(*b));
-            },
-            None => {
-                None
-            }
-        }
+impl RuntimeConst {
+    fn lookup_class(self: &RuntimeConst, class_name: &str) -> Option<&JVMClass> {
+        return self.classes.get(class_name);
     }
+}
 
+impl Runtime {
     fn as_ref(self: &mut Runtime) -> &mut Runtime {
         return self
     }
@@ -608,7 +598,9 @@ impl Runtime {
     }
 }
 
-fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, method_index: usize) -> Result<(), String> {
+fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
+    // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
+
     match constant_pool_lookup(constant_pool, method_index) {
         Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
             match constant_pool_lookup(constant_pool, *class_index as usize) {
@@ -623,36 +615,14 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, method_in
                                         Some(ConstantPoolEntry::Utf8(name)) => {
                                             println!("  method name={}", name);
 
-                                            /* have to pop N values from the stack, one for each parameter */
-
+                                            /* FIXME: have to pop N values from the stack, one for each parameter */
                                             let arg = runtime.pop_value_force()?;
 
                                             match runtime.pop_value() {
                                                 Some(RuntimeValue::Object(object)) => {
                                                     println!("  popped object class '{}'", object.class);
 
-                                                    match runtime.lookup_class(class_name) {
-                                                        Some(class) => {
-                                                            match class.methods.get(name){
-                                                                Some(method) => {
-                                                                    match method {
-                                                                        JVMMethod::Native(f) => {
-                                                                        },
-                                                                        JVMMethod::Bytecode(info) => {
-                                                                            let m = MethodInfo{access_flags: 0, name_index: 0, descriptor_index: 0, attributes: Vec::new()};
-                                                                            return do_execute_method(&m, constant_pool, runtime);
-                                                                        }
-                                                                    }
-                                                                },
-                                                                None => {
-                                                                }
-                                                            }
-                                                        }
-                                                        None => {
-                                                        }
-                                                    }
-
-                                                    match runtime.lookup_class(class_name){
+                                                    match jvm.lookup_class(class_name) {
                                                         Some(class) => {
                                                             match class.methods.get(name) {
                                                                 Some(method) => {
@@ -664,8 +634,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, method_in
                                                                         },
                                                                         JVMMethod::Bytecode(info) => {
                                                                             println!("invoke bytecode method");
-                                                                            // return do_execute_method(info, constant_pool, runtime);
-                                                                            // return do_execute_method(&info, constant_pool, runtime);
+                                                                            return do_execute_method(&info, constant_pool, runtime, jvm);
                                                                         }
                                                                     }
                                                                 }
@@ -678,7 +647,6 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, method_in
                                                             println!("could not find class with name {}", class_name);
                                                         }
                                                     }
-
                                                 },
                                                 None => {
                                                     println!("  No value on stack");
@@ -717,7 +685,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, method_in
     return Err("unable to find method".to_string())
 }
 
-fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, field_index: usize) -> Result<(), String> {
+fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &RuntimeConst, field_index: usize) -> Result<(), String> {
     match constant_pool_lookup(constant_pool, field_index) {
         Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
             println!("  class={}", class_index);
@@ -739,7 +707,7 @@ fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, field_index
                                         Some(name) => {
                                             println!("  name={}", name);
 
-                                            match runtime.lookup_class(class_name) {
+                                            match jvm.lookup_class(class_name) {
                                                 Some(class) => {
                                                     match class.fields.get(name) {
                                                         Some(value) => {
@@ -800,7 +768,40 @@ fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, field_index
     return Err(format!("error in getstatic with index {}", field_index).to_string());
 }
 
-fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime) -> Result<(), String> {
+fn push_runtime_constant(constant_pool: &ConstantPool, runtime: &mut Runtime, index: usize) -> Result<(), String> {
+    if index > 0 && index < constant_pool.len() {
+        match constant_pool_lookup(constant_pool, index) {
+            Some(ConstantPoolEntry::Utf8(name)) => {
+                println!("Pushing constant utf8 {}", name);
+            },
+            Some(ConstantPoolEntry::Stringref(string_index)) => {
+                println!("Pushing constant string {}", string_index);
+                match constant_pool_lookup(constant_pool, *string_index as usize) {
+                    Some(ConstantPoolEntry::Utf8(name)) => {
+                        println!("Pushing constant utf8 '{}'", name);
+                        runtime.push_value(RuntimeValue::String(name.clone()));
+                        return Ok(());
+                    },
+                    None => {
+                        println!("no such index {}", string_index);
+                    }
+                    _ => {
+                        println!("constant pool index {} is invalid", string_index);
+                    }
+                }
+            },
+            _ => {
+                println!("ERROR: unhandled constant {}", &constant_pool[index-1].name());
+            }
+        }
+    } else {
+        return Err(format!("constant index {} out of range", index).to_string());
+    }
+
+    return Err("error with push constant".to_string());
+}
+
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &RuntimeConst) -> Result<(), String> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
             AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
@@ -823,8 +824,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
 
                             pc += 2;
 
-                            op_getstatic(constant_pool, runtime, total)?;
-
+                            op_getstatic(constant_pool, runtime, jvm, total)?;
 
                             pc += 1;
                         },
@@ -833,45 +833,13 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                             let b2 = code[pc+2] as usize;
                             let total = (b1 << 8) | b2;
 
-                            pc += 2;
+                            invoke_virtual(constant_pool, runtime, jvm, total)?;
 
-                            invoke_virtual(constant_pool, runtime, total)?;
-
-                            // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
-
-
-                            pc += 1;
+                            pc += 3;
                         },
                         Opcodes::PushRuntimeConstant => {
                             let index = code[pc+1] as usize;
-                            if index > 0 && index < constant_pool.len() {
-                                match constant_pool_lookup(constant_pool, index) {
-                                    Some(ConstantPoolEntry::Utf8(name)) => {
-                                        println!("Pushing constant utf8 {}", name);
-                                    },
-                                    Some(ConstantPoolEntry::Stringref(string_index)) => {
-                                        println!("Pushing constant string {}", string_index);
-                                        match constant_pool_lookup(constant_pool, *string_index as usize) {
-                                            Some(ConstantPoolEntry::Utf8(name)) => {
-                                                println!("Pushing constant utf8 '{}'", name);
-                                                runtime.push_value(RuntimeValue::String(name.clone()));
-                                            },
-                                            None => {
-                                                println!("no such index {}", string_index);
-                                            }
-                                            _ => {
-                                                println!("constant pool index {} is invalid", string_index);
-                                            }
-                                        }
-                                    },
-                                    _ => {
-                                        println!("ERROR: unhandled constant {}", &constant_pool[index-1].name());
-                                    }
-                                }
-                            } else {
-                                println!("ERROR: constant index {} is invalid", index);
-                            }
-
+                            push_runtime_constant(constant_pool, runtime, index)?;
                             pc += 2;
                         },
                         _ => {
@@ -934,14 +902,19 @@ fn createJavaLangSystem() -> JVMClass {
 }
 
 fn createRuntime() -> Runtime {
+    return Runtime{
+        stack: Vec::new(),
+        locals: Vec::new(),
+    }
+}
+
+fn createRuntimeConst() -> RuntimeConst {
     let mut classes = HashMap::new();
 
     classes.insert("java/lang/System".to_string(), createJavaLangSystem());
     classes.insert("java/io/PrintStream".to_string(), createJavaIoPrintStream());
 
-    return Runtime{
-        stack: Vec::new(),
-        locals: Vec::new(),
+    return RuntimeConst{
         classes: classes,
     }
 }
@@ -968,7 +941,7 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
 
                     let mut runtime = createRuntime();
 
-                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut runtime);
+                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut runtime, &createRuntimeConst());
                 }
             },
             None => {
