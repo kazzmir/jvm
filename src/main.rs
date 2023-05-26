@@ -522,11 +522,13 @@ mod Opcodes {
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
 }
 
+#[derive(Clone)]
 enum RuntimeValue{
     Int(i32),
     Long(i64),
     Float(f32),
     Double(f64),
+    String(String),
     Object(JVMObject),
 }
 
@@ -535,10 +537,33 @@ struct JVMObject{
     fields: HashMap<String, RuntimeValue>,
 }
 
+impl Clone for JVMObject {
+    fn clone(&self) -> Self {
+        return JVMObject{
+            class: self.class.clone(),
+            fields: self.fields.clone(),
+        }
+    }
+}
+
 struct Runtime {
     stack: Vec<RuntimeValue>,
     locals: Vec<RuntimeValue>,
     classes: HashMap<String, JVMObject>,
+}
+
+impl Runtime {
+    fn lookup_class(self: &Runtime, class_name: &str) -> Option<&JVMObject> {
+        return self.classes.get(class_name);
+    }
+
+    fn push_value(self: &mut Runtime, value: RuntimeValue) {
+        self.stack.push(value);
+    }
+
+    fn pop_value(self: &mut Runtime) -> Option<RuntimeValue> {
+        return self.stack.pop();
+    }
 }
 
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime){
@@ -582,6 +607,23 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                                                             match lookup_utf8_constant(constant_pool, *name_index as usize) {
                                                                 Some(name) => {
                                                                     println!("  name={}", name);
+
+                                                                    match runtime.lookup_class(class_name) {
+                                                                        Some(class) => {
+                                                                            match class.fields.get(name) {
+                                                                                Some(value) => {
+                                                                                    println!(" pushing value");
+                                                                                    runtime.push_value(value.clone());
+                                                                                },
+                                                                                None => {
+                                                                                    println!("  Unknown field {}", name);
+                                                                                }
+                                                                            }
+                                                                        },
+                                                                        None => {
+                                                                            println!("  Unknown class {}", class_name);
+                                                                        }
+                                                                    }
                                                                 },
                                                                 None => {
                                                                     println!("  Unknown name index {}", *name_index);
@@ -596,6 +638,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                                                                     println!("  Unknown descriptor index {}", *descriptor_index);
                                                                 }
                                                             }
+
                                                         },
                                                         _ => {
                                                             println!("  Unknown name and type index {}", *name_and_type_index);
@@ -627,12 +670,24 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                         Opcodes::PushRuntimeConstant => {
                             let index = code[pc+1] as usize;
                             if index > 0 && index < constant_pool.len() {
-                                match &constant_pool[index-1] {
-                                    ConstantPoolEntry::Utf8(name) => {
-                                        println!("Pushing constant {}", name);
+                                match constant_pool_lookup(constant_pool, index) {
+                                    Some(ConstantPoolEntry::Utf8(name)) => {
+                                        println!("Pushing constant utf8 {}", name);
                                     },
-                                    ConstantPoolEntry::Stringref(index) => {
-                                        println!("Pushing constant {}", index);
+                                    Some(ConstantPoolEntry::Stringref(string_index)) => {
+                                        println!("Pushing constant string {}", string_index);
+                                        match constant_pool_lookup(constant_pool, *string_index as usize) {
+                                            Some(ConstantPoolEntry::Utf8(name)) => {
+                                                println!("Pushing constant utf8 '{}'", name);
+                                                runtime.push_value(RuntimeValue::String(name.clone()));
+                                            },
+                                            None => {
+                                                println!("no such index {}", string_index);
+                                            }
+                                            _ => {
+                                                println!("constant pool index {} is invalid", string_index);
+                                            }
+                                        }
                                     },
                                     _ => {
                                         println!("ERROR: unhandled constant {}", &constant_pool[index-1].name());
