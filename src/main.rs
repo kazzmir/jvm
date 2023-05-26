@@ -566,7 +566,22 @@ struct Runtime {
 
 impl Runtime {
     fn lookup_class(self: &Runtime, class_name: &str) -> Option<&JVMClass> {
-        return self.classes.get(class_name);
+        match self.classes.get(class_name) {
+            Some(b) => {
+                /*
+                match *b {
+                    obj => {
+                        return Some(Box::new(obj));
+                    }
+                }
+                */
+                return Some(b);
+                // return Some(Box::new(*b));
+            },
+            None => {
+                None
+            }
+        }
     }
 
     fn as_ref(self: &mut Runtime) -> &mut Runtime {
@@ -593,6 +608,198 @@ impl Runtime {
     }
 }
 
+fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, method_index: usize) -> Result<(), String> {
+    match constant_pool_lookup(constant_pool, method_index) {
+        Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
+            match constant_pool_lookup(constant_pool, *class_index as usize) {
+                Some(ConstantPoolEntry::Classref(class_index)) => {
+                    match constant_pool_lookup(constant_pool, *class_index as usize) {
+                        Some(ConstantPoolEntry::Utf8(class_name)) => {
+                            println!("Invoke method on class {}", class_name);
+
+                            match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                                Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                                    match constant_pool_lookup(constant_pool, *name_index as usize) {
+                                        Some(ConstantPoolEntry::Utf8(name)) => {
+                                            println!("  method name={}", name);
+
+                                            /* have to pop N values from the stack, one for each parameter */
+
+                                            let arg = runtime.pop_value_force()?;
+
+                                            match runtime.pop_value() {
+                                                Some(RuntimeValue::Object(object)) => {
+                                                    println!("  popped object class '{}'", object.class);
+
+                                                    match runtime.lookup_class(class_name) {
+                                                        Some(class) => {
+                                                            match class.methods.get(name){
+                                                                Some(method) => {
+                                                                    match method {
+                                                                        JVMMethod::Native(f) => {
+                                                                        },
+                                                                        JVMMethod::Bytecode(info) => {
+                                                                            let m = MethodInfo{access_flags: 0, name_index: 0, descriptor_index: 0, attributes: Vec::new()};
+                                                                            return do_execute_method(&m, constant_pool, runtime);
+                                                                        }
+                                                                    }
+                                                                },
+                                                                None => {
+                                                                }
+                                                            }
+                                                        }
+                                                        None => {
+                                                        }
+                                                    }
+
+                                                    match runtime.lookup_class(class_name){
+                                                        Some(class) => {
+                                                            match class.methods.get(name) {
+                                                                Some(method) => {
+                                                                    match method {
+                                                                        JVMMethod::Native(f) => {
+                                                                            println!("invoke native method");
+                                                                            f(&arg);
+                                                                            return Ok(());
+                                                                        },
+                                                                        JVMMethod::Bytecode(info) => {
+                                                                            println!("invoke bytecode method");
+                                                                            // return do_execute_method(info, constant_pool, runtime);
+                                                                            // return do_execute_method(&info, constant_pool, runtime);
+                                                                        }
+                                                                    }
+                                                                }
+                                                                None => {
+                                                                    println!("  Unknown method {}", name);
+                                                                }
+                                                            }
+                                                        },
+                                                        _ => {
+                                                            println!("could not find class with name {}", class_name);
+                                                        }
+                                                    }
+
+                                                },
+                                                None => {
+                                                    println!("  No value on stack");
+                                                }
+                                                _ => {
+                                                    println!("  wrong value type on stack");
+                                                }
+                                            }
+                                        },
+                                        _ => {
+                                            println!("  Unknown name index {}", *name_index);
+                                        }
+                                    }
+                                },
+                                _ => {
+                                    println!("Unknown name and type index {}", *name_and_type_index);
+                                }
+                            }
+
+                        },
+                        _ => {
+                            println!("Unknown class index {}", class_index);
+                        }
+                    }
+                },
+                _ => {
+                    println!("Unknown class index {}", class_index);
+                }
+            }
+        }
+        _ => {
+            println!("Unknown method index {}", method_index);
+        }
+    }
+
+    return Err("unable to find method".to_string())
+}
+
+fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, field_index: usize) -> Result<(), String> {
+    match constant_pool_lookup(constant_pool, field_index) {
+        Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
+            println!("  class={}", class_index);
+            println!("  name_and_type={}", name_and_type_index);
+
+            match constant_pool_lookup(constant_pool, *class_index as usize) {
+                Some(ConstantPoolEntry::Classref(index)) => {
+                    println!("  classref={}", index);
+                    match lookup_utf8_constant(constant_pool, *index as usize) {
+                        Some(class_name) => {
+                            println!("  class_name={}", class_name);
+
+                            match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                                Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                                    println!("  name_index={}", name_index);
+                                    println!("  descriptor_index={}", descriptor_index);
+
+                                    match lookup_utf8_constant(constant_pool, *name_index as usize) {
+                                        Some(name) => {
+                                            println!("  name={}", name);
+
+                                            match runtime.lookup_class(class_name) {
+                                                Some(class) => {
+                                                    match class.fields.get(name) {
+                                                        Some(value) => {
+                                                            println!(" pushing value");
+                                                            runtime.push_value(value.clone());
+                                                            return Ok(());
+                                                        },
+                                                        None => {
+                                                            println!("  Unknown field {}", name);
+                                                        }
+                                                    }
+                                                },
+                                                None => {
+                                                    println!("  Unknown class {}", class_name);
+                                                }
+                                            }
+                                        },
+                                        None => {
+                                            println!("  Unknown name index {}", *name_index);
+                                        }
+                                    }
+
+                                    match lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
+                                        Some(descriptor) => {
+                                            println!("  descriptor={}", descriptor);
+                                        },
+                                        None => {
+                                            println!("  Unknown descriptor index {}", *descriptor_index);
+                                        }
+                                    }
+
+                                },
+                                _ => {
+                                    println!("  Unknown name and type index {}", *name_and_type_index);
+                                }
+                            }
+
+                        },
+                        _ => {
+                            println!("  Unknown classref {}", *index);
+                        }
+                    }
+                },
+                _ => {
+                    println!("  Unknown classref {}", class_index);
+                }
+            }
+
+        },
+        Some(entry) => {
+            println!("  {}", entry.name());
+        },
+        None => {
+            println!("  Unknown constant pool entry {}", field_index);
+        }
+    }
+
+    return Err(format!("error in getstatic with index {}", field_index).to_string());
+}
+
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime) -> Result<(), String> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
@@ -614,85 +821,12 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                             let b2 = code[pc+2] as usize;
                             let total = (b1 << 8) | b2;
 
-                            match constant_pool_lookup(constant_pool, total) {
-                                Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
-                                    println!("  class={}", class_index);
-                                    println!("  name_and_type={}", name_and_type_index);
+                            pc += 2;
 
-                                    match constant_pool_lookup(constant_pool, *class_index as usize) {
-                                        Some(ConstantPoolEntry::Classref(index)) => {
-                                            println!("  classref={}", index);
-                                            match lookup_utf8_constant(constant_pool, *index as usize) {
-                                                Some(class_name) => {
-                                                    println!("  class_name={}", class_name);
+                            op_getstatic(constant_pool, runtime, total)?;
 
-                                                    match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
-                                                        Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
-                                                            println!("  name_index={}", name_index);
-                                                            println!("  descriptor_index={}", descriptor_index);
 
-                                                            match lookup_utf8_constant(constant_pool, *name_index as usize) {
-                                                                Some(name) => {
-                                                                    println!("  name={}", name);
-
-                                                                    match runtime.lookup_class(class_name) {
-                                                                        Some(class) => {
-                                                                            match class.fields.get(name) {
-                                                                                Some(value) => {
-                                                                                    println!(" pushing value");
-                                                                                    runtime.push_value(value.clone());
-                                                                                },
-                                                                                None => {
-                                                                                    println!("  Unknown field {}", name);
-                                                                                }
-                                                                            }
-                                                                        },
-                                                                        None => {
-                                                                            println!("  Unknown class {}", class_name);
-                                                                        }
-                                                                    }
-                                                                },
-                                                                None => {
-                                                                    println!("  Unknown name index {}", *name_index);
-                                                                }
-                                                            }
-
-                                                            match lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
-                                                                Some(descriptor) => {
-                                                                    println!("  descriptor={}", descriptor);
-                                                                },
-                                                                None => {
-                                                                    println!("  Unknown descriptor index {}", *descriptor_index);
-                                                                }
-                                                            }
-
-                                                        },
-                                                        _ => {
-                                                            println!("  Unknown name and type index {}", *name_and_type_index);
-                                                        }
-                                                    }
-
-                                                },
-                                                _ => {
-                                                    println!("  Unknown classref {}", *index);
-                                                }
-                                            }
-                                        },
-                                        _ => {
-                                            println!("  Unknown classref {}", class_index);
-                                        }
-                                    }
-
-                                },
-                                Some(entry) => {
-                                    println!("  {}", entry.name());
-                                },
-                                None => {
-                                    println!("  Unknown constant pool entry {}", total);
-                                }
-                            }
-
-                            pc += 3;
+                            pc += 1;
                         },
                         Opcodes::InvokeVirtual => {
                             let b1 = code[pc+1] as usize;
@@ -701,89 +835,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
 
                             pc += 2;
 
+                            invoke_virtual(constant_pool, runtime, total)?;
+
                             // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
 
-                            match constant_pool_lookup(constant_pool, total) {
-                                Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
-                                    match constant_pool_lookup(constant_pool, *class_index as usize) {
-                                        Some(ConstantPoolEntry::Classref(class_index)) => {
-                                            match constant_pool_lookup(constant_pool, *class_index as usize) {
-                                                Some(ConstantPoolEntry::Utf8(class_name)) => {
-                                                    println!("Invoke method on class {}", class_name);
-
-                                                    match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
-                                                        Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
-                                                            match constant_pool_lookup(constant_pool, *name_index as usize) {
-                                                                Some(ConstantPoolEntry::Utf8(name)) => {
-                                                                    println!("  method name={}", name);
-
-                                                                    /* have to pop N values from the stack, one for each parameter */
-
-                                                                    let arg = runtime.pop_value_force()?;
-
-                                                                    match runtime.pop_value() {
-                                                                        Some(RuntimeValue::Object(object)) => {
-                                                                            println!("  popped object class '{}'", object.class);
-
-                                                                            match runtime.lookup_class(class_name){
-                                                                                Some(class) => {
-                                                                                    match class.methods.get(name) {
-                                                                                        Some(method) => {
-                                                                                            match method {
-                                                                                                JVMMethod::Native(f) => {
-                                                                                                    println!("invoke native method");
-                                                                                                    f(&arg)
-                                                                                                },
-                                                                                                JVMMethod::Bytecode(info) => {
-                                                                                                    println!("invoke bytecode method");
-                                                                                                    // do_execute_method(info, constant_pool, runtime);
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                        None => {
-                                                                                            println!("  Unknown method {}", name);
-                                                                                        }
-                                                                                    }
-                                                                                },
-                                                                                _ => {
-                                                                                    println!("could not find class with name {}", class_name);
-                                                                                }
-                                                                            }
-
-                                                                        },
-                                                                        None => {
-                                                                            println!("  No value on stack");
-                                                                        }
-                                                                        _ => {
-                                                                            println!("  wrong value type on stack");
-                                                                        }
-                                                                    }
-                                                                },
-                                                                _ => {
-                                                                    println!("  Unknown name index {}", *name_index);
-                                                                }
-                                                            }
-                                                        },
-                                                        _ => {
-                                                            println!("Unknown name and type index {}", *name_and_type_index);
-                                                        }
-                                                    }
-
-                                                },
-                                                _ => {
-                                                    println!("Unknown class index {}", class_index);
-                                                }
-                                            }
-                                        },
-                                        _ => {
-                                            println!("Unknown class index {}", class_index);
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    println!("Unknown method index {}", total);
-                                }
-                            }
 
                             pc += 1;
                         },
