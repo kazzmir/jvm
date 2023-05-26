@@ -518,8 +518,9 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 mod Opcodes {
-    pub const GetStatic:u8 = 0xb2; // getstatic
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
+    pub const Return:u8 = 0xb1; // return
+    pub const GetStatic:u8 = 0xb2; // getstatic
     pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
 }
 
@@ -836,6 +837,9 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                             invoke_virtual(constant_pool, runtime, jvm, total)?;
 
                             pc += 3;
+                        },
+                        Opcodes::Return => {
+                            return Ok(());
                         },
                         Opcodes::PushRuntimeConstant => {
                             let index = code[pc+1] as usize;
