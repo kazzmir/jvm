@@ -1,6 +1,7 @@
 use std::env;
 // use std::io::{Read, BufReader};
 use std::io::{Read};
+use std::collections::HashMap;
 
 /*
 ClassFile {
@@ -521,7 +522,26 @@ mod Opcodes {
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
 }
 
-fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool){
+enum RuntimeValue{
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+    Object(JVMObject),
+}
+
+struct JVMObject{
+    class: String,
+    fields: HashMap<String, RuntimeValue>,
+}
+
+struct Runtime {
+    stack: Vec<RuntimeValue>,
+    locals: Vec<RuntimeValue>,
+    classes: HashMap<String, JVMObject>,
+}
+
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime){
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
             AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
@@ -636,6 +656,36 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool){
     }
 }
 
+fn createStdoutObject() -> JVMObject {
+    return JVMObject{
+        class: "java/io/PrintStream".to_string(),
+        fields: HashMap::new()
+    };
+}
+
+fn createJavaLangSystem() -> JVMObject {
+    let mut fields = HashMap::new();
+
+    fields.insert("out".to_string(), RuntimeValue::Object(createStdoutObject()));
+
+    return JVMObject{
+        class: "java/lang/System".to_string(),
+        fields: fields
+    };
+}
+
+fn createRuntime() -> Runtime {
+    let mut classes = HashMap::new();
+
+    classes.insert("java/lang/System".to_string(), createJavaLangSystem());
+
+    return Runtime{
+        stack: Vec::new(),
+        locals: Vec::new(),
+        classes: classes,
+    }
+}
+
 fn execute_method(jvm: &JVMClassFile, name: &str){
     // find method named 'name'
     // start executing byte code at that method
@@ -655,7 +705,10 @@ fn execute_method(jvm: &JVMClassFile, name: &str){
             Some(method_name) => {
                 println!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
-                    do_execute_method(&jvm.methods[i], &jvm.constant_pool);
+
+                    let mut runtime = createRuntime();
+
+                    do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut runtime);
                 }
             },
             None => {
