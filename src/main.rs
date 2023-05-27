@@ -524,6 +524,8 @@ mod Opcodes {
     pub const ILoad1:u8 = 0x1b; // iload_1
     pub const IStore1:u8 = 0x3c; // istore_1
     pub const IAdd:u8 = 0x60; // iadd
+    pub const IMul:u8 = 0x68; // imul
+    pub const IDiv:u8 = 0x6c; // idiv
     pub const Return:u8 = 0xb1; // return
     pub const GetStatic:u8 = 0xb2; // getstatic
     pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
@@ -531,7 +533,7 @@ mod Opcodes {
 
 #[derive(Clone)]
 enum RuntimeValue{
-    Int(i32),
+    Int(i64),
     Long(i64),
     Float(f32),
     Double(f64),
@@ -808,6 +810,27 @@ fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index:
     return Err("error with push constant".to_string());
 }
 
+fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<(), String> {
+    let value1 = frame.pop_value_force()?;
+    let value2 = frame.pop_value_force()?;
+    match value1 {
+        RuntimeValue::Int(i1) => {
+            match value2 {
+                RuntimeValue::Int(i2) => {
+                    frame.push_value(RuntimeValue::Int(op(i1, i2)));
+                    return Ok(());
+                },
+                _ => {
+                    return Err("invalid value type for integer op".to_string());
+                }
+            }
+        },
+        _ => {
+            return Err("invalid value type for integer op".to_string());
+        }
+    }
+}
+
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<(), String> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
@@ -843,23 +866,15 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         },
                         Opcodes::IAdd => {
                             pc += 1;
-                            let value1 = frame.pop_value_force()?;
-                            let value2 = frame.pop_value_force()?;
-                            match value1 {
-                                RuntimeValue::Int(i1) => {
-                                    match value2 {
-                                        RuntimeValue::Int(i2) => {
-                                            frame.push_value(RuntimeValue::Int(i1 + i2));
-                                        },
-                                        _ => {
-                                            return Err("invalid value type for iadd".to_string());
-                                        }
-                                    }
-                                },
-                                _ => {
-                                    return Err("invalid value type for iadd".to_string());
-                                }
-                            }
+                            do_iop(frame, |i1,i2| i1 + i2)?;
+                        },
+                        Opcodes::IMul => {
+                            pc += 1;
+                            do_iop(frame, |i1,i2| i1 * i2)?;
+                        },
+                        Opcodes::IDiv => {
+                            pc += 1;
+                            do_iop(frame, |i1,i2| i1 / i2)?;
                         },
                         Opcodes::GetStatic => {
                             println!("Get static");
