@@ -518,7 +518,12 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 mod Opcodes {
+    pub const IConst2:u8 = 0x5; // iconst_2
+    pub const IConst3:u8 = 0x6; // iconst_3
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
+    pub const ILoad1:u8 = 0x1b; // iload_1
+    pub const IStore1:u8 = 0x3c; // istore_1
+    pub const IAdd:u8 = 0x60; // iadd
     pub const Return:u8 = 0xb1; // return
     pub const GetStatic:u8 = 0xb2; // getstatic
     pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
@@ -635,7 +640,8 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                         },
                                                                         JVMMethod::Bytecode(info) => {
                                                                             println!("invoke bytecode method");
-                                                                            return do_execute_method(&info, constant_pool, frame, jvm);
+                                                                            let mut newFrame = createFrame(info);
+                                                                            return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
                                                                         }
                                                                     }
                                                                 }
@@ -817,6 +823,44 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 while pc < code.len() {
                     // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
                     match code[pc] {
+                        Opcodes::IConst2 => {
+                            frame.push_value(RuntimeValue::Int(2));
+                            pc += 1;
+                        },
+                        Opcodes::IConst3 => {
+                            frame.push_value(RuntimeValue::Int(3));
+                            pc += 1;
+                        },
+                        Opcodes::IStore1 => {
+                            pc += 1;
+                            let value = frame.pop_value_force()?;
+                            frame.locals[1] = value;
+                        },
+                        Opcodes::ILoad1 => {
+                            pc += 1;
+                            let value = frame.locals[1].clone();
+                            frame.push_value(value);
+                        },
+                        Opcodes::IAdd => {
+                            pc += 1;
+                            let value1 = frame.pop_value_force()?;
+                            let value2 = frame.pop_value_force()?;
+                            match value1 {
+                                RuntimeValue::Int(i1) => {
+                                    match value2 {
+                                        RuntimeValue::Int(i2) => {
+                                            frame.push_value(RuntimeValue::Int(i1 + i2));
+                                        },
+                                        _ => {
+                                            return Err("invalid value type for iadd".to_string());
+                                        }
+                                    }
+                                },
+                                _ => {
+                                    return Err("invalid value type for iadd".to_string());
+                                }
+                            }
+                        },
                         Opcodes::GetStatic => {
                             println!("Get static");
                             let b1 = code[pc+1] as usize;
@@ -876,6 +920,9 @@ fn createJavaIoPrintStream() -> JVMClass {
             RuntimeValue::String(s) => {
                 println!("{}", s);
             },
+            RuntimeValue::Int(i) => {
+                println!("{}", i);
+            },
             _ => {
                 println!("Unknown value type for println");
             }
@@ -905,10 +952,17 @@ fn createJavaLangSystem() -> JVMClass {
     };
 }
 
-fn createFrame() -> Frame {
+fn createFrame(method: &MethodInfo) -> Frame {
+    // get mac locals from Code attribute of method and set locals vector to be that size
+    let mut locals = Vec::new();
+    let max_locals = 5;
+    for _i in 0..max_locals {
+        // lame, fix
+        locals.push(RuntimeValue::Int(0));
+    }
     return Frame{
         stack: Vec::new(),
-        locals: Vec::new(),
+        locals,
     }
 }
 
@@ -943,7 +997,7 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
                 println!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
 
-                    let mut frame = createFrame();
+                    let mut frame = createFrame(&jvm.methods[i]);
 
                     return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &createRuntimeConst());
                 }
