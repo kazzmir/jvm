@@ -559,7 +559,7 @@ impl Clone for JVMObject {
     }
 }
 
-struct Runtime {
+struct Frame {
     stack: Vec<RuntimeValue>,
     locals: Vec<RuntimeValue>,
 }
@@ -574,20 +574,20 @@ impl RuntimeConst {
     }
 }
 
-impl Runtime {
-    fn as_ref(self: &mut Runtime) -> &mut Runtime {
+impl Frame {
+    fn as_ref(self: &mut Frame) -> &mut Frame {
         return self
     }
 
-    fn push_value(self: &mut Runtime, value: RuntimeValue) {
+    fn push_value(self: &mut Frame, value: RuntimeValue) {
         self.stack.push(value);
     }
 
-    fn pop_value(self: &mut Runtime) -> Option<RuntimeValue> {
+    fn pop_value(self: &mut Frame) -> Option<RuntimeValue> {
         return self.stack.pop();
     }
 
-    fn pop_value_force(self: &mut Runtime) -> Result<RuntimeValue, String> {
+    fn pop_value_force(self: &mut Frame) -> Result<RuntimeValue, String> {
         match self.stack.pop() {
             Some(value) => {
                 return Ok(value);
@@ -599,7 +599,7 @@ impl Runtime {
     }
 }
 
-fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
+fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
     // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
 
     match constant_pool_lookup(constant_pool, method_index) {
@@ -617,9 +617,9 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &Run
                                             println!("  method name={}", name);
 
                                             /* FIXME: have to pop N values from the stack, one for each parameter */
-                                            let arg = runtime.pop_value_force()?;
+                                            let arg = frame.pop_value_force()?;
 
-                                            match runtime.pop_value() {
+                                            match frame.pop_value() {
                                                 Some(RuntimeValue::Object(object)) => {
                                                     println!("  popped object class '{}'", object.class);
 
@@ -635,7 +635,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &Run
                                                                         },
                                                                         JVMMethod::Bytecode(info) => {
                                                                             println!("invoke bytecode method");
-                                                                            return do_execute_method(&info, constant_pool, runtime, jvm);
+                                                                            return do_execute_method(&info, constant_pool, frame, jvm);
                                                                         }
                                                                     }
                                                                 }
@@ -686,7 +686,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &Run
     return Err("unable to find method".to_string())
 }
 
-fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &RuntimeConst, field_index: usize) -> Result<(), String> {
+fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, field_index: usize) -> Result<(), String> {
     match constant_pool_lookup(constant_pool, field_index) {
         Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
             println!("  class={}", class_index);
@@ -713,7 +713,7 @@ fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &Runti
                                                     match class.fields.get(name) {
                                                         Some(value) => {
                                                             println!(" pushing value");
-                                                            runtime.push_value(value.clone());
+                                                            frame.push_value(value.clone());
                                                             return Ok(());
                                                         },
                                                         None => {
@@ -769,7 +769,7 @@ fn op_getstatic(constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &Runti
     return Err(format!("error in getstatic with index {}", field_index).to_string());
 }
 
-fn push_runtime_constant(constant_pool: &ConstantPool, runtime: &mut Runtime, index: usize) -> Result<(), String> {
+fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index: usize) -> Result<(), String> {
     if index > 0 && index < constant_pool.len() {
         match constant_pool_lookup(constant_pool, index) {
             Some(ConstantPoolEntry::Utf8(name)) => {
@@ -780,7 +780,7 @@ fn push_runtime_constant(constant_pool: &ConstantPool, runtime: &mut Runtime, in
                 match constant_pool_lookup(constant_pool, *string_index as usize) {
                     Some(ConstantPoolEntry::Utf8(name)) => {
                         println!("Pushing constant utf8 '{}'", name);
-                        runtime.push_value(RuntimeValue::String(name.clone()));
+                        frame.push_value(RuntimeValue::String(name.clone()));
                         return Ok(());
                     },
                     None => {
@@ -802,7 +802,7 @@ fn push_runtime_constant(constant_pool: &ConstantPool, runtime: &mut Runtime, in
     return Err("error with push constant".to_string());
 }
 
-fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime: &mut Runtime, jvm: &RuntimeConst) -> Result<(), String> {
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<(), String> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
             AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
@@ -825,7 +825,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
 
                             pc += 2;
 
-                            op_getstatic(constant_pool, runtime, jvm, total)?;
+                            op_getstatic(constant_pool, frame, jvm, total)?;
 
                             pc += 1;
                         },
@@ -834,7 +834,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                             let b2 = code[pc+2] as usize;
                             let total = (b1 << 8) | b2;
 
-                            invoke_virtual(constant_pool, runtime, jvm, total)?;
+                            invoke_virtual(constant_pool, frame, jvm, total)?;
 
                             pc += 3;
                         },
@@ -843,7 +843,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, runtime:
                         },
                         Opcodes::PushRuntimeConstant => {
                             let index = code[pc+1] as usize;
-                            push_runtime_constant(constant_pool, runtime, index)?;
+                            push_runtime_constant(constant_pool, frame, index)?;
                             pc += 2;
                         },
                         _ => {
@@ -905,8 +905,8 @@ fn createJavaLangSystem() -> JVMClass {
     };
 }
 
-fn createRuntime() -> Runtime {
-    return Runtime{
+fn createFrame() -> Frame {
+    return Frame{
         stack: Vec::new(),
         locals: Vec::new(),
     }
@@ -943,9 +943,9 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
                 println!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
 
-                    let mut runtime = createRuntime();
+                    let mut frame = createFrame();
 
-                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut runtime, &createRuntimeConst());
+                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &createRuntimeConst());
                 }
             },
             None => {
