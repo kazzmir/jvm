@@ -44,6 +44,25 @@ struct MethodInfo {
     attributes: Vec<AttributeKind>,
 }
 
+enum Descriptor {
+    Byte,
+    Char,
+    Double,
+    Float,
+    Int,
+    Long,
+    Short,
+    Boolean,
+    Object(String),
+    Void,
+    Array(Box<Descriptor>),
+}
+
+struct MethodDescriptor {
+    parameters: Vec<Descriptor>,
+    return_type: Descriptor,
+}
+
 /*
 struct AttributeInfo {
     attribute_name_index: u16,
@@ -578,7 +597,7 @@ impl fmt::Debug for RuntimeValue {
 }
 
 enum JVMMethod<'a>{
-    Native(fn(&[&RuntimeValue]) -> RuntimeValue),
+    Native(fn(&[RuntimeValue]) -> RuntimeValue),
     Bytecode(&'a MethodInfo),
 }
 
@@ -684,6 +703,101 @@ impl Frame {
     }
 }
 
+fn parse_field_descriptor(descriptor: &mut std::iter::Peekable<std::str::Chars>) -> Result<Descriptor, String> {
+
+    if let Some('B') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Byte);
+    }
+
+    if let Some('C') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Char);
+    }
+
+    if let Some('D') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Double);
+    }
+
+    if let Some('F') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Float);
+    }
+
+    if let Some('I') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Int);
+    }
+
+    if let Some('J') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Long);
+    }
+
+    if let Some('S') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Short);
+    }
+
+    if let Some('Z') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Boolean);
+    }
+
+    if let Some('V') = descriptor.peek() {
+        descriptor.next();
+        return Ok(Descriptor::Void);
+    }
+
+    if let Some('L') = descriptor.peek() {
+        descriptor.next();
+
+        let mut class_name = String::new();
+
+        while let Some(character) = descriptor.next() {
+            if character == ';' {
+                return Ok(Descriptor::Object(class_name));
+            }
+
+            class_name.push(character);
+        }
+
+        return Err("Invalid class name".to_string());
+    }
+
+    if let Some('[') = descriptor.peek() {
+        descriptor.next();
+
+        match parse_field_descriptor(descriptor)? {
+            Descriptor::Void => return Err("cannot have an array of void".to_string()),
+            d => return Ok(Descriptor::Array(Box::new(d)))
+        }
+    }
+
+    return Err("cannot parse field descriptor".to_string());
+}
+
+fn parse_method_descriptor(descriptor: &str) -> Result<MethodDescriptor, String> {
+    let mut parameters = Vec::new();
+    let mut descriptor = descriptor.chars().peekable();
+
+    if descriptor.peek() != Some(&'(') {
+        return Err("Invalid method descriptor".to_string());
+    }
+
+    descriptor.next();
+
+    while descriptor.peek() != Some(&')') {
+        parameters.push(parse_field_descriptor(&mut descriptor)?);
+    }
+
+    return Ok(MethodDescriptor{
+        parameters: parameters,
+        return_type: parse_field_descriptor(&mut descriptor)?,
+    });
+}
+
 fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<RuntimeValue, String> {
     match constant_pool_lookup(constant_pool, method_index) {
         Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
@@ -706,7 +820,16 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                             match method {
                                                                 JVMMethod::Native(f) => {
                                                                     println!("invoke native method");
-                                                                    return Ok(f(&[]));
+                                                                    if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
+                                                                        let method_descriptor = parse_method_descriptor(descriptor)?;
+                                                                        let mut locals = Vec::new();
+                                                                        for i in 0..method_descriptor.parameters.len() {
+                                                                            locals.push(frame.pop_value_force()?);
+                                                                        }
+                                                                        return Ok(f(locals.as_slice()));
+                                                                    } else {
+                                                                        return Err(format!("invalid descriptor index {}", *descriptor_index).to_string());
+                                                                    }
                                                                 },
                                                                 JVMMethod::Bytecode(info) => {
                                                                     println!("invoke bytecode method stack size {}", frame.stack.len());
@@ -720,7 +843,7 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                     }
                                                                 }
                                                             }
-                                                        }
+                                                        },
                                                         None => {
                                                             println!("  Unknown method {}", method_name);
                                                         }
@@ -791,7 +914,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                     match method {
                                                                         JVMMethod::Native(f) => {
                                                                             println!("invoke native method");
-                                                                            return Ok(f(&[&arg]));
+                                                                            return Ok(f(&[arg]));
                                                                         },
                                                                         JVMMethod::Bytecode(info) => {
                                                                             println!("invoke bytecode method");
@@ -1134,7 +1257,7 @@ fn createStdoutObject() -> Box<JVMObject> {
 
 fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
     let mut methods = HashMap::new();
-    methods.insert("println".to_string(), JVMMethod::Native(|args: &[&RuntimeValue]| {
+    methods.insert("println".to_string(), JVMMethod::Native(|args: &[RuntimeValue]| {
         for arg in args {
             match arg {
                 RuntimeValue::String(s) => {
