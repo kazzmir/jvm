@@ -506,6 +506,7 @@ fn constant_pool_lookup(constant_pool: &ConstantPool, constant_index: usize) -> 
     return None
 }
 
+/*
 fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
     if method_index < jvm.methods.len() {
         let method = &jvm.methods[method_index];
@@ -515,6 +516,7 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
 
     return None
 }
+*/
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 mod Opcodes {
@@ -543,9 +545,17 @@ enum RuntimeValue{
     Object(Box<JVMObject>),
 }
 
-enum JVMMethod{
+enum JVMMethod<'a>{
     Native(fn(&RuntimeValue)),
-    Bytecode(MethodInfo),
+    Bytecode(&'a MethodInfo),
+}
+
+fn lookup_method_name(constant_pool: &ConstantPool, index: usize) -> Result<String, String> {
+    if let Some(method_name) = lookup_utf8_constant(constant_pool, index) {
+        return Ok(method_name.to_string());
+    }
+
+    return Err(format!("no such method name at index {}", index));
 }
 
 fn createJvmClass(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
@@ -553,9 +563,16 @@ fn createJvmClass(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
         Some(ConstantPoolEntry::Classref(class_index)) => {
             match constant_pool_lookup(&jvmclass.constant_pool, *class_index as usize) {
                 Some(ConstantPoolEntry::Utf8(class_name)) => {
+                    let mut methods = HashMap::new();
+
+                    for method in jvmclass.methods.iter() {
+                        let method_name = lookup_method_name(&jvmclass.constant_pool, method.name_index as usize)?;
+                        methods.insert(method_name.to_string(), JVMMethod::Bytecode(method));
+                    }
+
                     return Ok(JVMClass{
                         class: class_name.to_string(),
-                        methods: HashMap::new(),
+                        methods: methods,
                         fields: HashMap::new(),
                     })
                 },
@@ -571,9 +588,9 @@ fn createJvmClass(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
 
 }
 
-struct JVMClass{
+struct JVMClass<'a>{
     class: String,
-    methods: HashMap<String, JVMMethod>,
+    methods: HashMap<String, JVMMethod<'a>>,
     fields: HashMap<String, RuntimeValue>,
 }
 
@@ -596,16 +613,16 @@ struct Frame {
     locals: Vec<RuntimeValue>,
 }
 
-struct RuntimeConst {
-    classes: HashMap<String, JVMClass>,
+struct RuntimeConst<'a> {
+    classes: HashMap<String, JVMClass<'a>>,
 }
 
-impl RuntimeConst {
-    fn lookup_class(self: &RuntimeConst, class_name: &str) -> Option<&JVMClass> {
+impl <'a, 'b: 'a>RuntimeConst<'a> {
+    fn lookup_class(self: &RuntimeConst<'a>, class_name: &str) -> Option<&JVMClass> {
         return self.classes.get(class_name);
     }
 
-    fn add_class(self: &mut RuntimeConst, jvm_class: JVMClass){
+    fn add_class(self: &mut RuntimeConst<'a>, jvm_class: JVMClass<'b>){
         self.classes.insert(jvm_class.class.clone(), jvm_class);
     }
 }
@@ -647,8 +664,35 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                             match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
                                 Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
                                     match constant_pool_lookup(constant_pool, *name_index as usize) {
-                                        Some(ConstantPoolEntry::Utf8(name)) => {
-                                            println!("invoke static method {} on class {}", name, class_name);
+                                        Some(ConstantPoolEntry::Utf8(method_name)) => {
+                                            println!("invoke static method {} on class {}", method_name, class_name);
+
+                                            match jvm.lookup_class(class_name) {
+                                                Some(class) => {
+                                                    match class.methods.get(method_name) {
+                                                        Some(method) => {
+                                                            match method {
+                                                                JVMMethod::Native(f) => {
+                                                                    println!("invoke native method");
+                                                                    // f();
+                                                                    return Ok(());
+                                                                },
+                                                                JVMMethod::Bytecode(info) => {
+                                                                    println!("invoke bytecode method");
+                                                                    let mut newFrame = createFrame(info);
+                                                                    return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
+                                                                }
+                                                            }
+                                                        }
+                                                        None => {
+                                                            println!("  Unknown method {}", method_name);
+                                                        }
+                                                    }
+                                                },
+                                                _ => {
+                                                    println!("  Unknown class {}", class_name);
+                                                }
+                                            }
                                         },
                                         _ => {
                                             return Err("Invalid name and type".to_string());
@@ -902,103 +946,114 @@ fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<(), String> {
     }
 }
 
-fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<(), String> {
+fn lookup_code_attribute(method: &MethodInfo) -> Option<&AttributeKind> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
             AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
-                println!("Code attribute");
-                println!("  max_stack={}", max_stack);
-                println!("  max_locals={}", max_locals);
-                println!("  code={}", code.len());
-                println!("  exception_table={}", exception_table.len());
-                println!("  attributes={}", attributes.len());
-
-                let mut pc = 0;
-                while pc < code.len() {
-                    // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
-                    match code[pc] {
-                        Opcodes::IConst2 => {
-                            frame.push_value(RuntimeValue::Int(2));
-                            pc += 1;
-                        },
-                        Opcodes::IConst3 => {
-                            frame.push_value(RuntimeValue::Int(3));
-                            pc += 1;
-                        },
-                        Opcodes::IConst4 => {
-                            frame.push_value(RuntimeValue::Int(4));
-                            pc += 1;
-                        },
-                        Opcodes::IStore1 => {
-                            pc += 1;
-                            let value = frame.pop_value_force()?;
-                            frame.locals[1] = value;
-                        },
-                        Opcodes::ILoad1 => {
-                            pc += 1;
-                            let value = frame.locals[1].clone();
-                            frame.push_value(value);
-                        },
-                        Opcodes::IAdd => {
-                            pc += 1;
-                            do_iop(frame, |i1,i2| i1 + i2)?;
-                        },
-                        Opcodes::IMul => {
-                            pc += 1;
-                            do_iop(frame, |i1,i2| i1 * i2)?;
-                        },
-                        Opcodes::IDiv => {
-                            pc += 1;
-                            do_iop(frame, |i1,i2| i1 / i2)?;
-                        },
-                        Opcodes::InvokeStatic => {
-                            let b1 = code[pc+1] as usize;
-                            let b2 = code[pc+2] as usize;
-                            let total = (b1 << 8) | b2;
-
-                            invoke_static(constant_pool, frame, jvm, total)?;
-                            pc += 3;
-                        },
-                        Opcodes::GetStatic => {
-                            println!("Get static");
-                            let b1 = code[pc+1] as usize;
-                            let b2 = code[pc+2] as usize;
-                            let total = (b1 << 8) | b2;
-
-                            pc += 2;
-
-                            op_getstatic(constant_pool, frame, jvm, total)?;
-
-                            pc += 1;
-                        },
-                        Opcodes::InvokeVirtual => {
-                            let b1 = code[pc+1] as usize;
-                            let b2 = code[pc+2] as usize;
-                            let total = (b1 << 8) | b2;
-
-                            invoke_virtual(constant_pool, frame, jvm, total)?;
-
-                            pc += 3;
-                        },
-                        Opcodes::Return => {
-                            return Ok(());
-                        },
-                        Opcodes::PushRuntimeConstant => {
-                            let index = code[pc+1] as usize;
-                            push_runtime_constant(constant_pool, frame, index)?;
-                            pc += 2;
-                        },
-                        _ => {
-                            println!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]);
-                            pc += 1;
-                        }
-                    }
-                }
-
+                return Some(&method.attributes[i]);
             },
             _ => {
             }
         }
+    }
+
+    return None;
+}
+
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<(), String> {
+    if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
+        // FIXME: create frame based on max_stack and max_locals
+        println!("Code attribute");
+        println!("  max_stack={}", max_stack);
+        println!("  max_locals={}", max_locals);
+        println!("  code={}", code.len());
+        println!("  exception_table={}", exception_table.len());
+        println!("  attributes={}", attributes.len());
+
+        let mut pc = 0;
+        while pc < code.len() {
+            // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
+            match code[pc] {
+                Opcodes::IConst2 => {
+                    frame.push_value(RuntimeValue::Int(2));
+                    pc += 1;
+                },
+                Opcodes::IConst3 => {
+                    frame.push_value(RuntimeValue::Int(3));
+                    pc += 1;
+                },
+                Opcodes::IConst4 => {
+                    frame.push_value(RuntimeValue::Int(4));
+                    pc += 1;
+                },
+                Opcodes::IStore1 => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[1] = value;
+                },
+                Opcodes::ILoad1 => {
+                    pc += 1;
+                    let value = frame.locals[1].clone();
+                    frame.push_value(value);
+                },
+                Opcodes::IAdd => {
+                    pc += 1;
+                    do_iop(frame, |i1,i2| i1 + i2)?;
+                },
+                Opcodes::IMul => {
+                    pc += 1;
+                    do_iop(frame, |i1,i2| i1 * i2)?;
+                },
+                Opcodes::IDiv => {
+                    pc += 1;
+                    do_iop(frame, |i1,i2| i1 / i2)?;
+                },
+                Opcodes::InvokeStatic => {
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
+
+                    invoke_static(constant_pool, frame, jvm, total)?;
+                    pc += 3;
+                },
+                Opcodes::GetStatic => {
+                    println!("Get static");
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
+
+                    pc += 2;
+
+                    op_getstatic(constant_pool, frame, jvm, total)?;
+
+                    pc += 1;
+                },
+                Opcodes::InvokeVirtual => {
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
+
+                    invoke_virtual(constant_pool, frame, jvm, total)?;
+
+                    pc += 3;
+                },
+                Opcodes::Return => {
+                    return Ok(());
+                },
+                Opcodes::PushRuntimeConstant => {
+                    let index = code[pc+1] as usize;
+                    push_runtime_constant(constant_pool, frame, index)?;
+                    pc += 2;
+                },
+                _ => {
+                    println!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]);
+                    pc += 1;
+                }
+            }
+        }
+
+    } else {
+        return Err("no code attribute".to_string());
     }
 
     return Ok(());
@@ -1011,7 +1066,7 @@ fn createStdoutObject() -> Box<JVMObject> {
     });
 }
 
-fn createJavaIoPrintStream() -> JVMClass {
+fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
     let mut methods = HashMap::new();
     methods.insert("println".to_string(), JVMMethod::Native(|arg: &RuntimeValue| {
         match arg {
@@ -1036,7 +1091,7 @@ fn createJavaIoPrintStream() -> JVMClass {
     }
 }
 
-fn createJavaLangSystem() -> JVMClass {
+fn createJavaLangSystem<'a>() -> JVMClass<'a> {
     let mut fields = HashMap::new();
 
     fields.insert("out".to_string(), RuntimeValue::Object(createStdoutObject()));
@@ -1064,7 +1119,7 @@ fn createFrame(method: &MethodInfo) -> Frame {
     }
 }
 
-fn createRuntimeConst() -> RuntimeConst {
+fn createRuntimeConst<'a>() -> RuntimeConst<'a> {
     let mut classes = HashMap::new();
 
     classes.insert("java/lang/System".to_string(), createJavaLangSystem());
