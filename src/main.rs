@@ -2,6 +2,7 @@ use std::env;
 // use std::io::{Read, BufReader};
 use std::io::{Read};
 use std::collections::HashMap;
+use std::fmt;
 
 /*
 ClassFile {
@@ -524,8 +525,10 @@ mod Opcodes {
     pub const IConst3:u8 = 0x6; // iconst_3
     pub const IConst4:u8 = 0x7; // iconst_4
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
+    pub const ILoad0:u8 = 0x1a; // iload_0
     pub const ILoad1:u8 = 0x1b; // iload_1
     pub const IStore1:u8 = 0x3c; // istore_1
+    pub const IReturn:u8 = 0xac; // ireturn
     pub const IAdd:u8 = 0x60; // iadd
     pub const IMul:u8 = 0x68; // imul
     pub const IDiv:u8 = 0x6c; // idiv
@@ -541,12 +544,41 @@ enum RuntimeValue{
     Long(i64),
     Float(f32),
     Double(f64),
+    Void,
     String(String),
     Object(Box<JVMObject>),
 }
 
+impl fmt::Debug for RuntimeValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeValue::Int(value) => {
+                write!(f, "Int({})", value)
+            },
+            RuntimeValue::Long(value) => {
+                write!(f, "Long({})", value)
+            },
+            RuntimeValue::Float(value) => {
+                write!(f, "Float({})", value)
+            },
+            RuntimeValue::Double(value) => {
+                write!(f, "Double({})", value)
+            },
+            RuntimeValue::Void => {
+                write!(f, "Void")
+            },
+            RuntimeValue::String(value) => {
+                write!(f, "String({})", value)
+            },
+            RuntimeValue::Object(value) => {
+                write!(f, "Object({:?})", value.class)
+            },
+        }
+    }
+}
+
 enum JVMMethod<'a>{
-    Native(fn(&RuntimeValue)),
+    Native(fn(&[&RuntimeValue]) -> RuntimeValue),
     Bytecode(&'a MethodInfo),
 }
 
@@ -652,7 +684,7 @@ impl Frame {
     }
 }
 
-fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
+fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<RuntimeValue, String> {
     match constant_pool_lookup(constant_pool, method_index) {
         Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
             match constant_pool_lookup(constant_pool, *class_index as usize) {
@@ -674,12 +706,13 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                             match method {
                                                                 JVMMethod::Native(f) => {
                                                                     println!("invoke native method");
-                                                                    // f();
-                                                                    return Ok(());
+                                                                    return Ok(f(&[]));
                                                                 },
                                                                 JVMMethod::Bytecode(info) => {
-                                                                    println!("invoke bytecode method");
-                                                                    let mut newFrame = createFrame(info);
+                                                                    println!("invoke bytecode method stack size {}", frame.stack.len());
+                                                                    let mut newFrame = createFrame(info)?;
+
+                                                                    newFrame.locals[0] = frame.pop_value_force()?;
                                                                     return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
                                                                 }
                                                             }
@@ -718,10 +751,10 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
             return Err("Invalid methodref".to_string());
         }
     }
-    return Ok(());
+    return Err("error invoking method".to_string());
 }
 
-fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
+fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<RuntimeValue, String> {
     // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
 
     match constant_pool_lookup(constant_pool, method_index) {
@@ -738,6 +771,8 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                         Some(ConstantPoolEntry::Utf8(name)) => {
                                             println!("  method name={}", name);
 
+                                            println!("  frame stack size {}", frame.stack.len());
+
                                             /* FIXME: have to pop N values from the stack, one for each parameter */
                                             let arg = frame.pop_value_force()?;
 
@@ -752,13 +787,12 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                     match method {
                                                                         JVMMethod::Native(f) => {
                                                                             println!("invoke native method");
-                                                                            f(&arg);
-                                                                            return Ok(());
+                                                                            return Ok(f(&[&arg]));
                                                                         },
                                                                         JVMMethod::Bytecode(info) => {
                                                                             println!("invoke bytecode method");
-                                                                            let mut newFrame = createFrame(info);
-                                                                            return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
+                                                                            let mut newFrame = createFrame(info)?;
+                                                                            return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
                                                                         }
                                                                     }
                                                                 }
@@ -773,7 +807,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                     }
                                                 },
                                                 None => {
-                                                    println!("  No value on stack");
+                                                    return Err("no value on stack".to_string());
                                                 }
                                                 _ => {
                                                     println!("  wrong value type on stack");
@@ -806,7 +840,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
         }
     }
 
-    return Err("unable to find method".to_string())
+    return Err(format!("unable to find method index {}", method_index).to_string())
 }
 
 fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, field_index: usize) -> Result<(), String> {
@@ -835,7 +869,7 @@ fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeCo
                                                 Some(class) => {
                                                     match class.fields.get(name) {
                                                         Some(value) => {
-                                                            println!(" pushing value");
+                                                            // println!(" pushing value");
                                                             frame.push_value(value.clone());
                                                             return Ok(());
                                                         },
@@ -932,6 +966,7 @@ fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<(), String> {
         RuntimeValue::Int(i1) => {
             match value2 {
                 RuntimeValue::Int(i2) => {
+                    println!("  iop {} {} = {}", i1, i2, op(i1, i2));
                     frame.push_value(RuntimeValue::Int(op(i1, i2)));
                     return Ok(());
                 },
@@ -960,7 +995,7 @@ fn lookup_code_attribute(method: &MethodInfo) -> Option<&AttributeKind> {
     return None;
 }
 
-fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<(), String> {
+fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<RuntimeValue, String> {
     if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
         // FIXME: create frame based on max_stack and max_locals
         println!("Code attribute");
@@ -986,10 +1021,25 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(RuntimeValue::Int(4));
                     pc += 1;
                 },
+                Opcodes::IReturn => {
+                    pc += 1;
+
+                    // let value = frame.pop_value_force()?; 
+                    // println!("returning value {:?}", value);
+
+                    return Ok(frame.pop_value_force()?);
+                    // return Ok(value);
+                },
                 Opcodes::IStore1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
+                },
+                Opcodes::ILoad0 => {
+                    pc += 1;
+                    let value = frame.locals[0].clone();
+                    println!("  load0: loading value {:?}", value);
+                    frame.push_value(value);
                 },
                 Opcodes::ILoad1 => {
                     pc += 1;
@@ -1013,7 +1063,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
 
-                    invoke_static(constant_pool, frame, jvm, total)?;
+                    match invoke_static(constant_pool, frame, jvm, total)? {
+                        RuntimeValue::Void => {},
+                        r => {
+                            println!("got back value {:?}", r);
+                            frame.stack.push(r);
+                        }
+                    }
+
                     pc += 3;
                 },
                 Opcodes::GetStatic => {
@@ -1033,12 +1090,17 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
 
-                    invoke_virtual(constant_pool, frame, jvm, total)?;
+                    match invoke_virtual(constant_pool, frame, jvm, total)? {
+                        RuntimeValue::Void => {},
+                        r => {
+                            frame.stack.push(r);
+                        }
+                    }
 
                     pc += 3;
                 },
                 Opcodes::Return => {
-                    return Ok(());
+                    return Ok(RuntimeValue::Void);
                 },
                 Opcodes::PushRuntimeConstant => {
                     let index = code[pc+1] as usize;
@@ -1056,7 +1118,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
         return Err("no code attribute".to_string());
     }
 
-    return Ok(());
+    return Ok(RuntimeValue::Void);
 }
 
 fn createStdoutObject() -> Box<JVMObject> {
@@ -1068,18 +1130,22 @@ fn createStdoutObject() -> Box<JVMObject> {
 
 fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
     let mut methods = HashMap::new();
-    methods.insert("println".to_string(), JVMMethod::Native(|arg: &RuntimeValue| {
-        match arg {
-            RuntimeValue::String(s) => {
-                println!("{}", s);
-            },
-            RuntimeValue::Int(i) => {
-                println!("{}", i);
-            },
-            _ => {
-                println!("Unknown value type for println");
+    methods.insert("println".to_string(), JVMMethod::Native(|args: &[&RuntimeValue]| {
+        for arg in args {
+            match arg {
+                RuntimeValue::String(s) => {
+                    println!("{}", s);
+                },
+                RuntimeValue::Int(i) => {
+                    println!("{}", i);
+                },
+                _ => {
+                    println!("Unknown value type for println");
+                }
             }
         }
+
+        return RuntimeValue::Void;
     }));
 
     let fields = HashMap::new();
@@ -1105,18 +1171,21 @@ fn createJavaLangSystem<'a>() -> JVMClass<'a> {
     };
 }
 
-fn createFrame(method: &MethodInfo) -> Frame {
-    // get mac locals from Code attribute of method and set locals vector to be that size
-    let mut locals = Vec::new();
-    let max_locals = 5;
-    for _i in 0..max_locals {
-        // lame, fix
-        locals.push(RuntimeValue::Int(0));
+fn createFrame(method: &MethodInfo) -> Result<Frame, String> {
+    if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
+        let mut locals = Vec::new();
+
+        for _i in 0..*max_locals {
+            locals.push(RuntimeValue::Void);
+        }
+
+        return Ok(Frame{
+            stack: Vec::new(),
+            locals,
+        })
     }
-    return Frame{
-        stack: Vec::new(),
-        locals,
-    }
+
+    return Err("no code attribute".to_string());
 }
 
 fn createRuntimeConst<'a>() -> RuntimeConst<'a> {
@@ -1130,7 +1199,7 @@ fn createRuntimeConst<'a>() -> RuntimeConst<'a> {
     }
 }
 
-fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
+fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<RuntimeValue, String> {
     // find method named 'name'
     // start executing byte code at that method
 
@@ -1150,7 +1219,7 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
                 println!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
 
-                    let mut frame = createFrame(&jvm.methods[i]);
+                    let mut frame = createFrame(&jvm.methods[i])?;
 
                     let mut runtime = createRuntimeConst();
                     runtime.add_class(createJvmClass(jvm)?);
@@ -1169,6 +1238,7 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     // iterate through arguments and print each one out
     /*
     for arg in args.iter() {
