@@ -710,10 +710,14 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                 },
                                                                 JVMMethod::Bytecode(info) => {
                                                                     println!("invoke bytecode method stack size {}", frame.stack.len());
-                                                                    let mut newFrame = createFrame(info)?;
 
-                                                                    newFrame.locals[0] = frame.pop_value_force()?;
-                                                                    return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
+                                                                    if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
+                                                                        let mut newFrame = createFrame(info)?;
+                                                                        for i in 0..(*max_locals as usize) {
+                                                                            newFrame.locals[i] = frame.pop_value_force()?;
+                                                                        }
+                                                                        return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
+                                                                    }
                                                                 }
                                                             }
                                                         }
