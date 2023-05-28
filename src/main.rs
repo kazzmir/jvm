@@ -703,6 +703,17 @@ impl Frame {
     }
 }
 
+fn make_string_from(descriptor: &mut std::iter::Peekable<std::str::Chars>) -> String {
+    let mut string = String::new();
+
+    while let Some(c) = descriptor.peek() {
+        string.push(*c);
+        descriptor.next();
+    }
+
+    return string;
+}
+
 fn parse_field_descriptor(descriptor: &mut std::iter::Peekable<std::str::Chars>) -> Result<Descriptor, String> {
 
     if let Some('B') = descriptor.peek() {
@@ -775,10 +786,12 @@ fn parse_field_descriptor(descriptor: &mut std::iter::Peekable<std::str::Chars>)
         }
     }
 
-    return Err("cannot parse field descriptor".to_string());
+    return Err(format!("cannot parse field descriptor: {}", make_string_from(descriptor)));
 }
 
 fn parse_method_descriptor(descriptor: &str) -> Result<MethodDescriptor, String> {
+    // println!("parse method descriptor: {}", descriptor);
+
     let mut parameters = Vec::new();
     let mut descriptor = descriptor.chars().peekable();
 
@@ -791,6 +804,8 @@ fn parse_method_descriptor(descriptor: &str) -> Result<MethodDescriptor, String>
     while descriptor.peek() != Some(&')') {
         parameters.push(parse_field_descriptor(&mut descriptor)?);
     }
+
+    descriptor.next();
 
     return Ok(MethodDescriptor{
         parameters: parameters,
@@ -899,46 +914,54 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                             println!("  method name={}", name);
 
                                             println!("  frame stack size {}", frame.stack.len());
+                                            if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
+                                                println!("  method descriptor={}", descriptor);
+                                                let method_descriptor = parse_method_descriptor(descriptor)?;
+                                                let mut locals = Vec::new();
+                                                for i in 0..method_descriptor.parameters.len() {
+                                                    locals.push(frame.pop_value_force()?);
+                                                }
 
-                                            /* FIXME: have to pop N values from the stack, one for each parameter */
-                                            let arg = frame.pop_value_force()?;
+                                                match frame.pop_value() {
+                                                    Some(RuntimeValue::Object(object)) => {
+                                                        println!("  popped object class '{}'", object.class);
 
-                                            match frame.pop_value() {
-                                                Some(RuntimeValue::Object(object)) => {
-                                                    println!("  popped object class '{}'", object.class);
-
-                                                    match jvm.lookup_class(class_name) {
-                                                        Some(class) => {
-                                                            match class.methods.get(name) {
-                                                                Some(method) => {
-                                                                    match method {
-                                                                        JVMMethod::Native(f) => {
-                                                                            println!("invoke native method");
-                                                                            return Ok(f(&[arg]));
-                                                                        },
-                                                                        JVMMethod::Bytecode(info) => {
-                                                                            println!("invoke bytecode method");
-                                                                            let mut newFrame = createFrame(info)?;
-                                                                            return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
+                                                        match jvm.lookup_class(class_name) {
+                                                            Some(class) => {
+                                                                match class.methods.get(name) {
+                                                                    Some(method) => {
+                                                                        match method {
+                                                                            JVMMethod::Native(f) => {
+                                                                                println!("invoke native method");
+                                                                                return Ok(f(&locals.as_slice()));
+                                                                            },
+                                                                            JVMMethod::Bytecode(info) => {
+                                                                                println!("invoke bytecode method");
+                                                                                let mut newFrame = createFrame(info)?;
+                                                                                newFrame.locals = locals;
+                                                                                return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
+                                                                            }
                                                                         }
                                                                     }
+                                                                    None => {
+                                                                        println!("  Unknown method {}", name);
+                                                                    }
                                                                 }
-                                                                None => {
-                                                                    println!("  Unknown method {}", name);
-                                                                }
+                                                            },
+                                                            _ => {
+                                                                println!("could not find class with name {}", class_name);
                                                             }
-                                                        },
-                                                        _ => {
-                                                            println!("could not find class with name {}", class_name);
                                                         }
+                                                    },
+                                                    None => {
+                                                        return Err("no value on stack".to_string());
                                                     }
-                                                },
-                                                None => {
-                                                    return Err("no value on stack".to_string());
+                                                    Some(value) => {
+                                                        return Err(format!("wrong value type on stack: {:?}", value));
+                                                    }
                                                 }
-                                                _ => {
-                                                    println!("  wrong value type on stack");
-                                                }
+                                            } else {
+                                                return Err(format!("could not find method descriptor {}", *descriptor_index));
                                             }
                                         },
                                         _ => {
