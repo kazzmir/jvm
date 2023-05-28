@@ -543,9 +543,11 @@ mod Opcodes {
     pub const IConst2:u8 = 0x5; // iconst_2
     pub const IConst3:u8 = 0x6; // iconst_3
     pub const IConst4:u8 = 0x7; // iconst_4
+    pub const IConst5:u8 = 0x8; // iconst_5
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
     pub const ILoad0:u8 = 0x1a; // iload_0
     pub const ILoad1:u8 = 0x1b; // iload_1
+    pub const ILoad2:u8 = 0x1c; // iload_2
     pub const IStore1:u8 = 0x3c; // istore_1
     pub const IReturn:u8 = 0xac; // ireturn
     pub const IAdd:u8 = 0x60; // iadd
@@ -834,7 +836,7 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                 for i in 0..method_descriptor.parameters.len() {
                                                     locals.push(frame.pop_value_force()?);
                                                 }
-
+                                                locals.reverse();
 
                                                 match jvm.lookup_class(class_name) {
                                                     Some(class) => {
@@ -919,6 +921,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                 for i in 0..method_descriptor.parameters.len() {
                                                     locals.push(frame.pop_value_force()?);
                                                 }
+                                                locals.reverse();
 
                                                 match frame.pop_value() {
                                                     Some(RuntimeValue::Object(object)) => {
@@ -1107,7 +1110,7 @@ fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index:
     return Err("error with push constant".to_string());
 }
 
-fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<(), String> {
+fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<RuntimeValue, String> {
     let value1 = frame.pop_value_force()?;
     let value2 = frame.pop_value_force()?;
     match value1 {
@@ -1115,8 +1118,7 @@ fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<(), String> {
             match value2 {
                 RuntimeValue::Int(i2) => {
                     println!("  iop {} {} = {}", i1, i2, op(i1, i2));
-                    frame.push_value(RuntimeValue::Int(op(i1, i2)));
-                    return Ok(());
+                    return Ok(RuntimeValue::Int(op(i1, i2)));
                 },
                 _ => {
                     return Err("invalid value type for integer op".to_string());
@@ -1169,6 +1171,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(RuntimeValue::Int(4));
                     pc += 1;
                 },
+                Opcodes::IConst5 => {
+                    frame.push_value(RuntimeValue::Int(5));
+                    pc += 1;
+                },
                 Opcodes::IReturn => {
                     pc += 1;
 
@@ -1194,17 +1200,25 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
                 },
+                Opcodes::ILoad2 => {
+                    pc += 1;
+                    let value = frame.locals[2].clone();
+                    frame.push_value(value);
+                },
                 Opcodes::IAdd => {
                     pc += 1;
-                    do_iop(frame, |i1,i2| i1 + i2)?;
+                    let value = do_iop(frame, |i1,i2| i1 + i2)?;
+                    frame.stack.push(value);
                 },
                 Opcodes::IMul => {
                     pc += 1;
-                    do_iop(frame, |i1,i2| i1 * i2)?;
+                    let value = do_iop(frame, |i1,i2| i1 * i2)?;
+                    frame.stack.push(value);
                 },
                 Opcodes::IDiv => {
                     pc += 1;
-                    do_iop(frame, |i1,i2| i1 / i2)?;
+                    let value = do_iop(frame, |i1,i2| i1 / i2)?;
+                    frame.stack.push(value);
                 },
                 Opcodes::InvokeStatic => {
                     let b1 = code[pc+1] as usize;
@@ -1256,8 +1270,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 2;
                 },
                 _ => {
-                    println!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]);
-                    pc += 1;
+                    return Err(format!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]));
                 }
             }
         }
