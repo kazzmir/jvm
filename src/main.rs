@@ -520,6 +520,7 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
 mod Opcodes {
     pub const IConst2:u8 = 0x5; // iconst_2
     pub const IConst3:u8 = 0x6; // iconst_3
+    pub const IConst4:u8 = 0x7; // iconst_4
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
     pub const ILoad1:u8 = 0x1b; // iload_1
     pub const IStore1:u8 = 0x3c; // istore_1
@@ -529,6 +530,7 @@ mod Opcodes {
     pub const Return:u8 = 0xb1; // return
     pub const GetStatic:u8 = 0xb2; // getstatic
     pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
+    pub const InvokeStatic:u8 = 0xb8; // invokestatic
 }
 
 #[derive(Clone)]
@@ -544,6 +546,29 @@ enum RuntimeValue{
 enum JVMMethod{
     Native(fn(&RuntimeValue)),
     Bytecode(MethodInfo),
+}
+
+fn createJvmClass(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
+    match constant_pool_lookup(&jvmclass.constant_pool, jvmclass.this_class as usize) {
+        Some(ConstantPoolEntry::Classref(class_index)) => {
+            match constant_pool_lookup(&jvmclass.constant_pool, *class_index as usize) {
+                Some(ConstantPoolEntry::Utf8(class_name)) => {
+                    return Ok(JVMClass{
+                        class: class_name.to_string(),
+                        methods: HashMap::new(),
+                        fields: HashMap::new(),
+                    })
+                },
+                _ => {
+                    return Err("Invalid name reference".to_string());
+                }
+            }
+        },
+        _ => {
+            return Err("Invalid class reference".to_string());
+        }
+    }
+
 }
 
 struct JVMClass{
@@ -579,6 +604,10 @@ impl RuntimeConst {
     fn lookup_class(self: &RuntimeConst, class_name: &str) -> Option<&JVMClass> {
         return self.classes.get(class_name);
     }
+
+    fn add_class(self: &mut RuntimeConst, jvm_class: JVMClass){
+        self.classes.insert(jvm_class.class.clone(), jvm_class);
+    }
 }
 
 impl Frame {
@@ -604,6 +633,48 @@ impl Frame {
             }
         }
     }
+}
+
+fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
+    match constant_pool_lookup(constant_pool, method_index) {
+        Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
+            match constant_pool_lookup(constant_pool, *class_index as usize) {
+                Some(ConstantPoolEntry::Classref(class_index)) => {
+                    match constant_pool_lookup(constant_pool, *class_index as usize) {
+                        Some(ConstantPoolEntry::Utf8(class_name)) => {
+                            println!("Invoke method on class {}", class_name);
+
+                            match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                                Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                                    match constant_pool_lookup(constant_pool, *name_index as usize) {
+                                        Some(ConstantPoolEntry::Utf8(name)) => {
+                                            println!("invoke static method {} on class {}", name, class_name);
+                                        },
+                                        _ => {
+                                            return Err("Invalid name and type".to_string());
+                                        }
+                                    }
+                                },
+                                _ => {
+                                    return Err("Invalid name and type".to_string());
+                                }
+                            }
+                        },
+                        _ => {
+                            return Err("Invalid classref".to_string());
+                        }
+                    }
+                },
+                _ => {
+                    return Err("Invalid classref".to_string());
+                }
+            }
+        },
+        _ => {
+            return Err("Invalid methodref".to_string());
+        }
+    }
+    return Ok(());
 }
 
 fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
@@ -854,6 +925,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                             frame.push_value(RuntimeValue::Int(3));
                             pc += 1;
                         },
+                        Opcodes::IConst4 => {
+                            frame.push_value(RuntimeValue::Int(4));
+                            pc += 1;
+                        },
                         Opcodes::IStore1 => {
                             pc += 1;
                             let value = frame.pop_value_force()?;
@@ -875,6 +950,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         Opcodes::IDiv => {
                             pc += 1;
                             do_iop(frame, |i1,i2| i1 / i2)?;
+                        },
+                        Opcodes::InvokeStatic => {
+                            let b1 = code[pc+1] as usize;
+                            let b2 = code[pc+2] as usize;
+                            let total = (b1 << 8) | b2;
+
+                            invoke_static(constant_pool, frame, jvm, total)?;
+                            pc += 3;
                         },
                         Opcodes::GetStatic => {
                             println!("Get static");
@@ -1014,7 +1097,10 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<(), String> {
 
                     let mut frame = createFrame(&jvm.methods[i]);
 
-                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &createRuntimeConst());
+                    let mut runtime = createRuntimeConst();
+                    runtime.add_class(createJvmClass(jvm)?);
+
+                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &runtime);
                 }
             },
             None => {
