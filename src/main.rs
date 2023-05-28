@@ -828,45 +828,43 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                         Some(ConstantPoolEntry::Utf8(method_name)) => {
                                             println!("invoke static method {} on class {}", method_name, class_name);
 
-                                            match jvm.lookup_class(class_name) {
-                                                Some(class) => {
-                                                    match class.methods.get(method_name) {
-                                                        Some(method) => {
-                                                            match method {
-                                                                JVMMethod::Native(f) => {
-                                                                    println!("invoke native method");
-                                                                    if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
-                                                                        let method_descriptor = parse_method_descriptor(descriptor)?;
-                                                                        let mut locals = Vec::new();
-                                                                        for i in 0..method_descriptor.parameters.len() {
-                                                                            locals.push(frame.pop_value_force()?);
-                                                                        }
-                                                                        return Ok(f(locals.as_slice()));
-                                                                    } else {
-                                                                        return Err(format!("invalid descriptor index {}", *descriptor_index).to_string());
-                                                                    }
-                                                                },
-                                                                JVMMethod::Bytecode(info) => {
-                                                                    println!("invoke bytecode method stack size {}", frame.stack.len());
+                                            if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
+                                                let method_descriptor = parse_method_descriptor(descriptor)?;
+                                                let mut locals = Vec::new();
+                                                for i in 0..method_descriptor.parameters.len() {
+                                                    locals.push(frame.pop_value_force()?);
+                                                }
 
-                                                                    if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
+
+                                                match jvm.lookup_class(class_name) {
+                                                    Some(class) => {
+                                                        match class.methods.get(method_name) {
+                                                            Some(method) => {
+                                                                match method {
+                                                                    JVMMethod::Native(f) => {
+                                                                        println!("invoke native method");
+                                                                        return Ok(f(locals.as_slice()));
+                                                                    },
+                                                                    JVMMethod::Bytecode(info) => {
+                                                                        println!("invoke bytecode method stack size {}", frame.stack.len());
+
                                                                         let mut newFrame = createFrame(info)?;
-                                                                        for i in 0..(*max_locals as usize) {
-                                                                            newFrame.locals[i] = frame.pop_value_force()?;
-                                                                        }
+                                                                        newFrame.locals = locals;
                                                                         return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
                                                                     }
                                                                 }
+                                                            },
+                                                            None => {
+                                                                println!("  Unknown method {}", method_name);
                                                             }
-                                                        },
-                                                        None => {
-                                                            println!("  Unknown method {}", method_name);
                                                         }
+                                                    },
+                                                    _ => {
+                                                        println!("  Unknown class {}", class_name);
                                                     }
-                                                },
-                                                _ => {
-                                                    println!("  Unknown class {}", class_name);
                                                 }
+                                            } else {
+                                                return Err(format!("could not find descriptor {}", *descriptor_index))
                                             }
                                         },
                                         _ => {
