@@ -1678,6 +1678,8 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let high = make_int32(code[pc], code[pc+1], code[pc+2], code[pc+3]) as i64;
                     pc += 4;
 
+                    // TODO: we don't really need to build this vector, we could just use the index
+                    // to directly map into the correct code[] offset
                     let mut offsets = Vec::new();
                     for _ in low..=high {
                         let offset = make_int32(code[pc], code[pc+1], code[pc+2], code[pc+3]);
