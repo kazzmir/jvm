@@ -750,3 +750,12 @@ pub fn parse_method_descriptor(descriptor: &str) -> Result<MethodDescriptor, Str
         return_type: parse_field_descriptor(&mut descriptor)?,
     });
 }
+
+pub fn lookup_method_name(constant_pool: &ConstantPool, index: usize) -> Result<String, String> {
+    if let Some(method_name) = lookup_utf8_constant(constant_pool, index) {
+        return Ok(method_name.to_string());
+    }
+
+    return Err(format!("no such method name at index {}", index));
+}
+
