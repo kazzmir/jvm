@@ -150,6 +150,11 @@ struct LineNumberTableEntry {
     line_number: u16,
 }
 
+// FIXME: change this to an enum
+struct StackMapFrameEntry{
+    // TODO
+}
+
 enum AttributeKind {
     Code{
         max_stack: u16,
@@ -163,6 +168,112 @@ enum AttributeKind {
     },
     SourceFile{
     },
+    StackMapFrame{
+        entries: Vec<StackMapFrameEntry>,
+    },
+}
+
+fn read_verification_type_info(file: &mut dyn std::io::Read) -> Result<(), std::io::Error> {
+    let kind = read_u8(file);
+    match kind {
+        0 => {
+            // Top_variable_info
+            return Ok(())
+        },
+        1 => {
+            // Integer_variable_info
+            return Ok(())
+        },
+        2 => {
+            // Float_variable_info
+            return Ok(())
+        },
+        3 => {
+            // Double_variable_info
+            return Ok(())
+        },
+        4 => {
+            // Long_variable_info
+            return Ok(())
+        },
+        5 => {
+            // Null_variable_info
+            return Ok(())
+        },
+        6 => {
+            // UninitializedThis_variable_info
+            return Ok(())
+        },
+        7 => {
+            // Object_variable_info
+            let index = read_u16_bigendian(file);
+            return Ok(())
+        },
+        8 => {
+            let index = read_u16_bigendian(file);
+            return Ok(())
+        },
+        _ => {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("unknown verification type {}", kind)))
+        }
+    }
+}
+
+fn read_stackmap_frame(file: &mut dyn std::io::Read) -> Result<StackMapFrameEntry, std::io::Error> {
+    let kind = read_u8(file);
+
+    if kind <= 63 {
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind >= 64 && kind <= 127 {
+        read_verification_type_info(file)?;
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind >= 128 && kind <= 246 {
+        // reserved for future use
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind == 247 {
+        let offset_delta = read_u16_bigendian(file);
+        read_verification_type_info(file)?;
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind >= 248 && kind <= 250 {
+        let offset_delta = read_u16_bigendian(file);
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind == 251 {
+        let offset_delta = read_u16_bigendian(file);
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind >= 252 && kind <= 254 {
+        let offset_delta = read_u16_bigendian(file);
+        for _ in 0..(kind - 251) {
+            read_verification_type_info(file)?;
+        }
+        return Ok(StackMapFrameEntry{})
+    }
+
+    if kind == 255 {
+        let offset_delta = read_u16_bigendian(file);
+        let number_of_locals = read_u16_bigendian(file);
+        for _ in 0..number_of_locals {
+            read_verification_type_info(file)?;
+        }
+        let number_of_stack_items = read_u16_bigendian(file);
+        for _ in 0..number_of_stack_items {
+            read_verification_type_info(file)?;
+        }
+        return Ok(StackMapFrameEntry{})
+    }
+
+    return Ok(StackMapFrameEntry{});
 }
 
 fn read_exception(file: &mut dyn std::io::Read) -> Result<ExceptionTableEntry, std::io::Error> {
@@ -236,6 +347,17 @@ fn read_attribute(file: &mut dyn std::io::Read, constant_pool: &ConstantPool) ->
         Some("SourceFile") => {
             result.bytes().collect::<Vec<_>>();
             return Ok(AttributeKind::SourceFile{
+            });
+        },
+        Some("StackMapTable") => {
+            let entry_count = read_u16_bigendian(&mut result);
+            let mut entries = Vec::new();
+            for _i in 0..entry_count {
+                let frame = read_stackmap_frame(&mut result)?;
+                entries.push(frame);
+            }
+            return Ok(AttributeKind::StackMapFrame{
+                entries: entries,
             });
         },
         Some(something) => {
@@ -543,22 +665,34 @@ fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 mod Opcodes {
+    pub const IConst0:u8 = 0x3; // iconst_0
+    pub const IConst1:u8 = 0x4; // iconst_1
     pub const IConst2:u8 = 0x5; // iconst_2
     pub const IConst3:u8 = 0x6; // iconst_3
     pub const IConst4:u8 = 0x7; // iconst_4
     pub const IConst5:u8 = 0x8; // iconst_5
+    pub const PushByte:u8 = 0x10; // bipush
     pub const PushRuntimeConstant:u8 = 0x12; // ldc
+    pub const ILoad:u8 = 0x15; // iload
     pub const ILoad0:u8 = 0x1a; // iload_0
     pub const ILoad1:u8 = 0x1b; // iload_1
     pub const ILoad2:u8 = 0x1c; // iload_2
+    pub const ILoad3:u8 = 0x1d; // iload_3
     pub const ALoad0:u8 = 0x2a; // aload_0
     pub const ALoad1:u8 = 0x2b; // aload_1
+    pub const IStore:u8 = 0x36; // istore
+    pub const IStore0:u8 = 0x3b; // istore_0
     pub const IStore1:u8 = 0x3c; // istore_1
+    pub const IStore2:u8 = 0x3d; // istore_2
+    pub const IStore3:u8 = 0x3e; // istore_3
     pub const AStore1:u8 = 0x4c; // astore_1
     pub const Dup:u8 = 0x59; // dup
     pub const IAdd:u8 = 0x60; // iadd
     pub const IMul:u8 = 0x68; // imul
     pub const IDiv:u8 = 0x6c; // idiv
+    pub const IInc:u8 = 0x84; // iinc
+    pub const IfICompareGreaterEqual:u8 = 0xa2; // if_icmpge
+    pub const Goto:u8 = 0xa7; // goto
     pub const IReturn:u8 = 0xac; // ireturn
     pub const Return:u8 = 0xb1; // return
     pub const GetStatic:u8 = 0xb2; // getstatic
@@ -570,7 +704,7 @@ mod Opcodes {
     pub const New:u8 = 0xbb; // new
 }
 
-// #[derive(Clone)]
+#[derive(Clone)]
 enum RuntimeValue{
     Int(i64),
     Long(i64),
@@ -581,6 +715,7 @@ enum RuntimeValue{
     Object(rc::Rc<cell::RefCell<JVMObject>>),
 }
 
+/*
 impl Clone for RuntimeValue {
     fn clone(self: &RuntimeValue) -> RuntimeValue {
         match self {
@@ -594,6 +729,7 @@ impl Clone for RuntimeValue {
         }
     }
 }
+*/
 
 impl fmt::Debug for RuntimeValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1076,6 +1212,14 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                             JVMMethod::Bytecode(info) => {
                                                                                 debug!("invoke bytecode method '{}'", name);
                                                                                 let mut newFrame = createFrame(info)?;
+
+                                                                                // fill in the rest of the locals array with 0
+                                                                                if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
+                                                                                    for _i in 0..((*max_locals as usize) - locals.len()) {
+                                                                                        locals.push(RuntimeValue::Int(0));
+                                                                                    }
+                                                                                }
+
                                                                                 newFrame.locals = locals;
                                                                                 return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
                                                                             }
@@ -1383,6 +1527,27 @@ fn getfield(constant_pool: &ConstantPool, jvm: &RuntimeConst, field_index: usize
     }
 }
 
+fn do_icompare(frame: &mut Frame, pc: usize, offset: i16, compare: fn(i64, i64) -> bool) -> Result<usize, String>{
+    let value2 = frame.pop_value_force()?;
+    let value1 = frame.pop_value_force()?;
+    match (value1, value2) {
+        (RuntimeValue::Int(i1), RuntimeValue::Int(i2)) => {
+            if i1 >= i2 {
+                return Ok((pc as i16 + offset) as usize);
+            }
+        }
+        _ => {
+            return Err("invalid compare of non-int".to_string());
+        }
+    }
+
+    return Ok(pc + 3)
+}
+
+fn make_int(byte1:u8, byte2:u8) -> u16 {
+    return ((byte1 as u16) << 8) | (byte2 as u16)
+}
+
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<RuntimeValue, String> {
     if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
         // FIXME: create frame based on max_stack and max_locals
@@ -1397,6 +1562,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
         while pc < code.len() {
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
             match code[pc] {
+                Opcodes::IConst0 => {
+                    frame.push_value(RuntimeValue::Int(0));
+                    pc += 1;
+                },
+                Opcodes::IConst1 => {
+                    frame.push_value(RuntimeValue::Int(1));
+                    pc += 1;
+                },
                 Opcodes::IConst2 => {
                     frame.push_value(RuntimeValue::Int(2));
                     pc += 1;
@@ -1412,6 +1585,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 Opcodes::IConst5 => {
                     frame.push_value(RuntimeValue::Int(5));
                     pc += 1;
+                },
+                Opcodes::PushByte => {
+                    let value = code[pc + 1] as i64;
+                    frame.push_value(RuntimeValue::Int(value));
+                    pc += 2;
                 },
                 Opcodes::IReturn => {
                     pc += 1;
@@ -1433,10 +1611,31 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
                 },
+                Opcodes::IStore => {
+                    let index = code[pc + 1] as usize;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[index] = value;
+                    pc += 2;
+                },
+                Opcodes::IStore0 => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[0] = value;
+                },
                 Opcodes::IStore1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
+                },
+                Opcodes::IStore2 => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[2] = value;
+                },
+                Opcodes::IStore3 => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[3] = value;
                 },
                 Opcodes::ALoad0 => {
                     pc += 1;
@@ -1447,6 +1646,20 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
+                },
+                Opcodes::IfICompareGreaterEqual => {
+                    pc = do_icompare(frame, pc, make_int(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
+                },
+                Opcodes::Goto => {
+                    let old = pc;
+                    let offset = make_int(code[pc+1], code[pc+2]);
+                    pc = (pc as i16 + offset as i16) as usize;
+                },
+                Opcodes::ILoad => {
+                    let index = code[pc + 1] as usize;
+                    let value = frame.locals[index].clone();
+                    frame.push_value(value);
+                    pc += 2;
                 },
                 Opcodes::ILoad0 => {
                     pc += 1;
@@ -1464,6 +1677,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.locals[2].clone();
                     frame.push_value(value);
                 },
+                Opcodes::ILoad3 => {
+                    pc += 1;
+                    let value = frame.locals[3].clone();
+                    frame.push_value(value);
+                },
                 Opcodes::IAdd => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 + i2)?;
@@ -1478,6 +1696,20 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 / i2)?;
                     frame.stack.push(value);
+                },
+                Opcodes::IInc => {
+                    let index = code[pc + 1] as usize;
+                    let value = frame.locals[index].clone();
+                    let inc = code[pc + 2] as i64;
+                    match value {
+                        RuntimeValue::Int(i) => {
+                            frame.locals[index] = RuntimeValue::Int(i + inc)
+                        },
+                        _ => {
+                            return Err("inc on non-int".to_string());
+                        }
+                    }
+                    pc += 3;
                 },
                 Opcodes::New => {
                     let b1 = code[pc+1] as usize;
