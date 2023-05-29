@@ -549,15 +549,21 @@ mod Opcodes {
     pub const ILoad0:u8 = 0x1a; // iload_0
     pub const ILoad1:u8 = 0x1b; // iload_1
     pub const ILoad2:u8 = 0x1c; // iload_2
+    pub const ALoad0:u8 = 0x2a; // aload_0
+    pub const ALoad1:u8 = 0x2b; // aload_1
     pub const IStore1:u8 = 0x3c; // istore_1
-    pub const IReturn:u8 = 0xac; // ireturn
+    pub const AStore1:u8 = 0x4c; // astore_1
+    pub const Dup:u8 = 0x59; // dup
     pub const IAdd:u8 = 0x60; // iadd
     pub const IMul:u8 = 0x68; // imul
     pub const IDiv:u8 = 0x6c; // idiv
+    pub const IReturn:u8 = 0xac; // ireturn
     pub const Return:u8 = 0xb1; // return
     pub const GetStatic:u8 = 0xb2; // getstatic
     pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
+    pub const InvokeSpecial:u8 = 0xb7; // invokespecial
     pub const InvokeStatic:u8 = 0xb8; // invokestatic
+    pub const New:u8 = 0xbb; // new
 }
 
 #[derive(Clone)]
@@ -658,6 +664,15 @@ impl Clone for JVMObject {
         return JVMObject{
             class: self.class.clone(),
             fields: self.fields.clone(),
+        }
+    }
+}
+
+impl <'a>JVMClass<'a>{
+    fn create_object(self: &JVMClass<'a>) -> JVMObject {
+        return JVMObject{
+            class: self.class.clone(),
+            fields: HashMap::new(),
         }
     }
 }
@@ -897,6 +912,105 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
     return Err("error invoking method".to_string());
 }
 
+fn invoke_special(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<(), String> {
+    match constant_pool_lookup(constant_pool, method_index) {
+        Some(ConstantPoolEntry::Methodref(class_index, name_and_type_index)) => {
+            match constant_pool_lookup(constant_pool, *class_index as usize) {
+                Some(ConstantPoolEntry::Classref(class_index)) => {
+                    match constant_pool_lookup(constant_pool, *class_index as usize) {
+                        Some(ConstantPoolEntry::Utf8(class_name)) => {
+                            debug!("Invoke method on class {}", class_name);
+
+                            match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                                Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                                    match constant_pool_lookup(constant_pool, *name_index as usize) {
+                                        Some(ConstantPoolEntry::Utf8(name)) => {
+                                            debug!("  method name={}", name);
+
+                                            debug!("  frame stack size {}", frame.stack.len());
+                                            if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
+                                                debug!("  method descriptor={}", descriptor);
+                                                let method_descriptor = parse_method_descriptor(descriptor)?;
+                                                let mut locals = Vec::new();
+                                                for i in 0..method_descriptor.parameters.len() {
+                                                    locals.push(frame.pop_value_force()?);
+                                                }
+                                                let object_arg = frame.pop_value_force()?;
+
+                                                match object_arg {
+                                                    RuntimeValue::Object(object) => {
+                                                        debug!("  popped object class '{}'", object.class);
+
+                                                        match jvm.lookup_class(class_name) {
+                                                            Some(class) => {
+                                                                match class.methods.get(name) {
+                                                                    Some(method) => {
+                                                                        locals.push(RuntimeValue::Object(object));
+                                                                        locals.reverse();
+
+                                                                        match method {
+                                                                            JVMMethod::Native(f) => {
+                                                                                debug!("invoke native method");
+                                                                                f(&locals.as_slice());
+                                                                                return Ok(());
+                                                                            },
+                                                                            JVMMethod::Bytecode(info) => {
+                                                                                debug!("invoke bytecode method '{}'", name);
+                                                                                let mut newFrame = createFrame(info)?;
+                                                                                newFrame.locals = locals;
+                                                                                do_execute_method(&info, constant_pool, &mut newFrame, jvm)?;
+                                                                                return Ok(());
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    None => {
+                                                                        debug!("  Unknown method {}", name);
+                                                                    }
+                                                                }
+                                                            },
+                                                            _ => {
+                                                                debug!("could not find class with name {}", class_name);
+                                                            }
+                                                        }
+                                                    },
+                                                    value => {
+                                                        return Err(format!("wrong value type on stack: {:?}", value));
+                                                    }
+                                                }
+                                            } else {
+                                                return Err(format!("could not find method descriptor {}", *descriptor_index));
+                                            }
+                                        },
+                                        _ => {
+                                            debug!("  Unknown name index {}", *name_index);
+                                        }
+                                    }
+                                },
+                                _ => {
+                                    debug!("Unknown name and type index {}", *name_and_type_index);
+                                }
+                            }
+
+                        },
+                        _ => {
+                            debug!("Unknown class index {}", class_index);
+                        }
+                    }
+                },
+                _ => {
+                    debug!("Unknown class index {}", class_index);
+                }
+            }
+        }
+        _ => {
+            debug!("Unknown method index {}", method_index);
+        }
+    }
+
+    return Err(format!("unable to find method index {}", method_index).to_string())
+
+}
+
 fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, method_index: usize) -> Result<RuntimeValue, String> {
     // FIXME: handle polymorphic methods: https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-2.html#jvms-2.9.3
 
@@ -922,7 +1036,6 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                 for i in 0..method_descriptor.parameters.len() {
                                                     locals.push(frame.pop_value_force()?);
                                                 }
-                                                locals.reverse();
 
                                                 match frame.pop_value() {
                                                     Some(RuntimeValue::Object(object)) => {
@@ -930,6 +1043,11 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
 
                                                         match jvm.lookup_class(class_name) {
                                                             Some(class) => {
+
+                                                                /* push `this' pointer */
+                                                                locals.push(RuntimeValue::Object(object));
+                                                                locals.reverse();
+
                                                                 match class.methods.get(name) {
                                                                     Some(method) => {
                                                                         match method {
@@ -938,7 +1056,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                                 return Ok(f(&locals.as_slice()));
                                                                             },
                                                                             JVMMethod::Bytecode(info) => {
-                                                                                debug!("invoke bytecode method");
+                                                                                debug!("invoke bytecode method '{}'", name);
                                                                                 let mut newFrame = createFrame(info)?;
                                                                                 newFrame.locals = locals;
                                                                                 return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
@@ -1132,6 +1250,37 @@ fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<RuntimeValue, St
     }
 }
 
+fn create_new_object(constant_pool: &ConstantPool, jvm: &RuntimeConst, index: usize) -> Result<RuntimeValue, String> {
+    match constant_pool_lookup(constant_pool, index) {
+        Some(ConstantPoolEntry::Classref(class_index)) => {
+            match constant_pool_lookup(constant_pool, *class_index as usize) {
+                Some(ConstantPoolEntry::Utf8(class_name)) => {
+                    debug!("  class_name={}", class_name);
+                    match jvm.lookup_class(class_name) {
+                        Some(class) => {
+                            return Ok(RuntimeValue::Object(Box::new(class.create_object())))
+                        },
+                        None => {
+                            return Err(format!("no such class named '{}'", class_name).to_string());
+                        }
+                    }
+                },
+                _ => {
+                    debug!("  Unknown classref {}", *class_index);
+                }
+            }
+        },
+        None => {
+            return Err(format!("unknown classref {}", index))
+        }
+        _ => {
+            return Err(format!("index {} was not a classref", index))
+        }
+    }
+
+    return Err("error with create object".to_string());
+}
+
 fn lookup_code_attribute(method: &MethodInfo) -> Option<&AttributeKind> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
@@ -1185,10 +1334,31 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
                 },
+                Opcodes::Dup => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.push_value(value.clone());
+                    frame.push_value(value);
+                },
+                Opcodes::AStore1 => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[1] = value;
+                },
                 Opcodes::IStore1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
+                },
+                Opcodes::ALoad0 => {
+                    pc += 1;
+                    let value = frame.locals[0].clone();
+                    frame.push_value(value);
+                },
+                Opcodes::ALoad1 => {
+                    pc += 1;
+                    let value = frame.locals[1].clone();
+                    frame.push_value(value);
                 },
                 Opcodes::ILoad0 => {
                     pc += 1;
@@ -1220,6 +1390,23 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 / i2)?;
                     frame.stack.push(value);
+                },
+                Opcodes::New => {
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
+
+                    frame.push_value(create_new_object(constant_pool, jvm, total)?);
+
+                    pc += 3;
+
+                },
+                Opcodes::InvokeSpecial => {
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
+                    invoke_special(constant_pool, frame, jvm, total)?;
+                    pc += 3;
                 },
                 Opcodes::InvokeStatic => {
                     let b1 = code[pc+1] as usize;
@@ -1293,7 +1480,7 @@ fn createStdoutObject() -> Box<JVMObject> {
 fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
     let mut methods = HashMap::new();
     methods.insert("println".to_string(), JVMMethod::Native(|args: &[RuntimeValue]| {
-        for arg in args {
+        for arg in &args[1..] {
             match arg {
                 RuntimeValue::String(s) => {
                     println!("{}", s);
@@ -1302,7 +1489,7 @@ fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
                     println!("{}", i);
                 },
                 _ => {
-                    println!("Unknown value type for println");
+                    println!("Unknown value type for println: {:?}", arg);
                 }
             }
         }
@@ -1350,11 +1537,27 @@ fn createFrame(method: &MethodInfo) -> Result<Frame, String> {
     return Err("no code attribute".to_string());
 }
 
+fn createJavaLangObject<'a>() -> JVMClass<'a> {
+    let mut fields = HashMap::new();
+    let mut methods = HashMap::new();
+
+    methods.insert("<init>".to_string(), JVMMethod::Native(|_args: &[RuntimeValue]| {
+        return RuntimeValue::Void;
+    }));
+
+    return JVMClass{
+        class: "java/lang/Object".to_string(),
+        methods: methods,
+        fields: fields,
+    };
+}
+
 fn createRuntimeConst<'a>() -> RuntimeConst<'a> {
     let mut classes = HashMap::new();
 
     classes.insert("java/lang/System".to_string(), createJavaLangSystem());
     classes.insert("java/io/PrintStream".to_string(), createJavaIoPrintStream());
+    classes.insert("java/lang/Object".to_string(), createJavaLangObject());
 
     return RuntimeConst{
         classes: classes,
