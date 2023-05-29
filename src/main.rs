@@ -3,6 +3,8 @@ use std::env;
 use std::io::{Read};
 use std::collections::HashMap;
 use std::fmt;
+use std::rc;
+use std::cell;
 use debug_print::debug_eprintln as debug;
 
 /*
@@ -560,13 +562,15 @@ mod Opcodes {
     pub const IReturn:u8 = 0xac; // ireturn
     pub const Return:u8 = 0xb1; // return
     pub const GetStatic:u8 = 0xb2; // getstatic
+    pub const GetField:u8 = 0xb4; // getfield
+    pub const PutField:u8 = 0xb5; // putfield
     pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
     pub const InvokeSpecial:u8 = 0xb7; // invokespecial
     pub const InvokeStatic:u8 = 0xb8; // invokestatic
     pub const New:u8 = 0xbb; // new
 }
 
-#[derive(Clone)]
+// #[derive(Clone)]
 enum RuntimeValue{
     Int(i64),
     Long(i64),
@@ -574,7 +578,21 @@ enum RuntimeValue{
     Double(f64),
     Void,
     String(String),
-    Object(Box<JVMObject>),
+    Object(rc::Rc<cell::RefCell<JVMObject>>),
+}
+
+impl Clone for RuntimeValue {
+    fn clone(self: &RuntimeValue) -> RuntimeValue {
+        match self {
+            RuntimeValue::Int(i) => RuntimeValue::Int(*i),
+            RuntimeValue::Long(i) => RuntimeValue::Long(*i),
+            RuntimeValue::Float(i) => RuntimeValue::Float(*i),
+            RuntimeValue::Double(i) => RuntimeValue::Double(*i),
+            RuntimeValue::Void => RuntimeValue::Void,
+            RuntimeValue::String(s) => RuntimeValue::String(s.clone()),
+            RuntimeValue::Object(object) => RuntimeValue::Object(object.clone()),
+        }
+    }
 }
 
 impl fmt::Debug for RuntimeValue {
@@ -599,7 +617,7 @@ impl fmt::Debug for RuntimeValue {
                 write!(f, "String({})", value)
             },
             RuntimeValue::Object(value) => {
-                write!(f, "Object({:?})", value.class)
+                write!(f, "Object({:?})", value.borrow().class)
             },
         }
     }
@@ -939,7 +957,7 @@ fn invoke_special(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
 
                                                 match object_arg {
                                                     RuntimeValue::Object(object) => {
-                                                        debug!("  popped object class '{}'", object.class);
+                                                        debug!("  popped object class '{}'", object.borrow().class);
 
                                                         match jvm.lookup_class(class_name) {
                                                             Some(class) => {
@@ -1039,7 +1057,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
 
                                                 match frame.pop_value() {
                                                     Some(RuntimeValue::Object(object)) => {
-                                                        debug!("  popped object class '{}'", object.class);
+                                                        debug!("  popped object class '{}'", object.borrow().class);
 
                                                         match jvm.lookup_class(class_name) {
                                                             Some(class) => {
@@ -1258,7 +1276,7 @@ fn create_new_object(constant_pool: &ConstantPool, jvm: &RuntimeConst, index: us
                     debug!("  class_name={}", class_name);
                     match jvm.lookup_class(class_name) {
                         Some(class) => {
-                            return Ok(RuntimeValue::Object(Box::new(class.create_object())))
+                            return Ok(RuntimeValue::Object(rc::Rc::new(cell::RefCell::new(class.create_object()))))
                         },
                         None => {
                             return Err(format!("no such class named '{}'", class_name).to_string());
@@ -1293,6 +1311,76 @@ fn lookup_code_attribute(method: &MethodInfo) -> Option<&AttributeKind> {
     }
 
     return None;
+}
+
+fn putfield(constant_pool: &ConstantPool, jvm: &RuntimeConst, field_index: usize, object: RuntimeValue, field_value: RuntimeValue) -> Result<(), String> {
+    match constant_pool_lookup(constant_pool, field_index) {
+        Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
+            match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                    match lookup_utf8_constant(constant_pool, *name_index as usize) {
+                        Some(name) => {
+                            match object {
+                                RuntimeValue::Object(object) => {
+                                    debug!("  set field {}.{} = {:?}", object.borrow().class, name, field_value);
+                                    object.borrow_mut().fields.insert(name.to_string(), field_value);
+                                    return Ok(());
+                                },
+                                _ => {
+                                    return Err(format!("objectref was not an object: {:?}", object))
+                                }
+                            }
+                        },
+                        _ => {
+                            return Err(format!("unknown name index {}", name_index))
+                        }
+                    }
+                },
+                _ => {
+                    return Err(format!("unknown name and type index {}", name_and_type_index))
+                }
+            }
+        },
+        _ => {
+            return Err(format!("unknown fieldref {}", field_index))
+        }
+    }
+}
+
+fn getfield(constant_pool: &ConstantPool, jvm: &RuntimeConst, field_index: usize, object: RuntimeValue) -> Result<RuntimeValue, String> {
+    match constant_pool_lookup(constant_pool, field_index) {
+        Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
+            match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
+                Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
+                    match lookup_utf8_constant(constant_pool, *name_index as usize) {
+                        Some(name) => {
+                            match object {
+                                RuntimeValue::Object(object) => {
+                                    if let Some(value) = object.borrow().fields.get(name) {
+                                        return Ok(value.clone());
+                                    } else {
+                                        return Err(format!("no such field '{}' in class '{}'", name, object.borrow().class));
+                                    }
+                                },
+                                _ => {
+                                    return Err(format!("objectref was not an object: {:?}", object))
+                                }
+                            }
+                        },
+                        _ => {
+                            return Err(format!("unknown name index {}", name_index))
+                        }
+                    }
+                },
+                _ => {
+                    return Err(format!("unknown name and type index {}", name_and_type_index))
+                }
+            }
+        },
+        _ => {
+            return Err(format!("unknown fieldref {}", field_index))
+        }
+    }
 }
 
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<RuntimeValue, String> {
@@ -1399,7 +1487,26 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(create_new_object(constant_pool, jvm, total)?);
 
                     pc += 3;
+                },
+                Opcodes::GetField => {
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
+                    let objectref = frame.pop_value_force()?;
+                    frame.push_value(getfield(constant_pool, jvm, total, objectref)?);
+                    pc += 3;
+                },
+                Opcodes::PutField => {
+                    let b1 = code[pc+1] as usize;
+                    let b2 = code[pc+2] as usize;
+                    let total = (b1 << 8) | b2;
 
+                    let value = frame.pop_value_force()?;
+                    let objectref = frame.pop_value_force()?;
+
+                    putfield(constant_pool, jvm, total, objectref, value)?;
+
+                    pc += 3;
                 },
                 Opcodes::InvokeSpecial => {
                     let b1 = code[pc+1] as usize;
@@ -1470,11 +1577,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
     return Ok(RuntimeValue::Void);
 }
 
-fn createStdoutObject() -> Box<JVMObject> {
-    return Box::new(JVMObject{
+fn createStdoutObject() -> rc::Rc<cell::RefCell<JVMObject>> {
+    return rc::Rc::new(cell::RefCell::new(JVMObject{
         class: "java/io/PrintStream".to_string(),
         fields: HashMap::new()
-    });
+    }));
 }
 
 fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
