@@ -3,6 +3,7 @@ use std::env;
 use std::io::{Read};
 use std::collections::HashMap;
 use std::fmt;
+use debug_print::debug_eprintln as debug;
 
 /*
 ClassFile {
@@ -268,7 +269,7 @@ fn read_field(file: &mut std::fs::File, constant_pool: &ConstantPool) -> Result<
     let descriptor_index = read_u16_bigendian(file);
     let attributes_count = read_u16_bigendian(file);
 
-    println!("Read field attributes");
+    debug!("Read field attributes");
     let mut attributes = Vec::new();
     for _i in 0..attributes_count {
         attributes.push(read_attribute(file, constant_pool)?);
@@ -285,7 +286,7 @@ fn read_field(file: &mut std::fs::File, constant_pool: &ConstantPool) -> Result<
 // jvm class specification
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-4.html
 fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
-    println!("Parsing file: {}", filename);
+    debug!("Parsing file: {}", filename);
     // open filename as binary
 
     match std::fs::File::open(filename) {
@@ -316,7 +317,7 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
             jvm_class_file.major_version = read_u16_bigendian(&mut file);
             let constant_pool_count = read_u16_bigendian(&mut file);
 
-            println!("Reading constants {0}", constant_pool_count);
+            debug!("Reading constants {0}", constant_pool_count);
             for _i in 0..constant_pool_count - 1 {
                 /*
                 let mut constant_pool_info = ConstantPoolInfo {
@@ -443,7 +444,7 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
                 let descriptor_index = read_u16_bigendian(&mut file);
                 let attributes_count = read_u16_bigendian(&mut file);
 
-                println!("Method access flags 0x{:x}", access_flags);
+                debug!("Method access flags 0x{:x}", access_flags);
 
                 let attributes = read_attributes(&mut file, &jvm_class_file.constant_pool, attributes_count)?;
 
@@ -466,35 +467,35 @@ fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> {
             }
             */
 
-            println!("Reading class attributes");
+            debug!("Reading class attributes");
             jvm_class_file.attributes = read_attributes(&mut file, &jvm_class_file.constant_pool, attributes_count)?;
 
-            println!("Magic: 0x{0:x}", jvm_class_file.magic);
-            println!("Version: {0}.{1}", jvm_class_file.major_version, jvm_class_file.minor_version);
-            println!("Constant pool: {0}", constant_pool_count);
-            println!("Access flags: 0x{0:X}", jvm_class_file.access_flags);
-            println!("Interfaces: {0}", jvm_class_file.interfaces_count);
-            println!("Fields: {0}", jvm_class_file.fields_count);
-            println!("Methods: {0}", methods_count);
+            debug!("Magic: 0x{0:x}", jvm_class_file.magic);
+            debug!("Version: {0}.{1}", jvm_class_file.major_version, jvm_class_file.minor_version);
+            debug!("Constant pool: {0}", constant_pool_count);
+            debug!("Access flags: 0x{0:X}", jvm_class_file.access_flags);
+            debug!("Interfaces: {0}", jvm_class_file.interfaces_count);
+            debug!("Fields: {0}", jvm_class_file.fields_count);
+            debug!("Methods: {0}", methods_count);
 
             for i in 0..jvm_class_file.fields_count {
-                println!("Field {}", i);
+                debug!("Field {}", i);
                 let name = lookup_utf8_constant(&jvm_class_file.constant_pool, jvm_class_file.fields[i as usize].name_index as usize);
                 match name {
                     Some(name) => {
-                        println!("  name={}", name);
+                        debug!("  name={}", name);
                     },
                     None => {
-                        println!("  name=unknown");
+                        debug!("  name=unknown");
                     }
                 }
                 let descriptor = lookup_utf8_constant(&jvm_class_file.constant_pool, jvm_class_file.fields[i as usize].descriptor_index as usize);
                 match descriptor {
                     Some(descriptor) => {
-                        println!("  descriptor={}", descriptor);
+                        debug!("  descriptor={}", descriptor);
                     },
                     None => {
-                        println!("  descriptor=unknown");
+                        debug!("  descriptor=unknown");
                     }
                 }
             }
@@ -822,13 +823,13 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                 Some(ConstantPoolEntry::Classref(class_index)) => {
                     match constant_pool_lookup(constant_pool, *class_index as usize) {
                         Some(ConstantPoolEntry::Utf8(class_name)) => {
-                            println!("Invoke method on class {}", class_name);
+                            debug!("Invoke method on class {}", class_name);
 
                             match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
                                 Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
                                     match constant_pool_lookup(constant_pool, *name_index as usize) {
                                         Some(ConstantPoolEntry::Utf8(method_name)) => {
-                                            println!("invoke static method {} on class {}", method_name, class_name);
+                                            debug!("invoke static method {} on class {}", method_name, class_name);
 
                                             if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
                                                 let method_descriptor = parse_method_descriptor(descriptor)?;
@@ -844,11 +845,11 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                             Some(method) => {
                                                                 match method {
                                                                     JVMMethod::Native(f) => {
-                                                                        println!("invoke native method");
+                                                                        debug!("invoke native method");
                                                                         return Ok(f(locals.as_slice()));
                                                                     },
                                                                     JVMMethod::Bytecode(info) => {
-                                                                        println!("invoke bytecode method stack size {}", frame.stack.len());
+                                                                        debug!("invoke bytecode method stack size {}", frame.stack.len());
 
                                                                         let mut newFrame = createFrame(info)?;
                                                                         newFrame.locals = locals;
@@ -857,12 +858,12 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                 }
                                                             },
                                                             None => {
-                                                                println!("  Unknown method {}", method_name);
+                                                                debug!("  Unknown method {}", method_name);
                                                             }
                                                         }
                                                     },
                                                     _ => {
-                                                        println!("  Unknown class {}", class_name);
+                                                        debug!("  Unknown class {}", class_name);
                                                     }
                                                 }
                                             } else {
@@ -905,17 +906,17 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                 Some(ConstantPoolEntry::Classref(class_index)) => {
                     match constant_pool_lookup(constant_pool, *class_index as usize) {
                         Some(ConstantPoolEntry::Utf8(class_name)) => {
-                            println!("Invoke method on class {}", class_name);
+                            debug!("Invoke method on class {}", class_name);
 
                             match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
                                 Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
                                     match constant_pool_lookup(constant_pool, *name_index as usize) {
                                         Some(ConstantPoolEntry::Utf8(name)) => {
-                                            println!("  method name={}", name);
+                                            debug!("  method name={}", name);
 
-                                            println!("  frame stack size {}", frame.stack.len());
+                                            debug!("  frame stack size {}", frame.stack.len());
                                             if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
-                                                println!("  method descriptor={}", descriptor);
+                                                debug!("  method descriptor={}", descriptor);
                                                 let method_descriptor = parse_method_descriptor(descriptor)?;
                                                 let mut locals = Vec::new();
                                                 for i in 0..method_descriptor.parameters.len() {
@@ -925,7 +926,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
 
                                                 match frame.pop_value() {
                                                     Some(RuntimeValue::Object(object)) => {
-                                                        println!("  popped object class '{}'", object.class);
+                                                        debug!("  popped object class '{}'", object.class);
 
                                                         match jvm.lookup_class(class_name) {
                                                             Some(class) => {
@@ -933,11 +934,11 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                     Some(method) => {
                                                                         match method {
                                                                             JVMMethod::Native(f) => {
-                                                                                println!("invoke native method");
+                                                                                debug!("invoke native method");
                                                                                 return Ok(f(&locals.as_slice()));
                                                                             },
                                                                             JVMMethod::Bytecode(info) => {
-                                                                                println!("invoke bytecode method");
+                                                                                debug!("invoke bytecode method");
                                                                                 let mut newFrame = createFrame(info)?;
                                                                                 newFrame.locals = locals;
                                                                                 return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
@@ -945,12 +946,12 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                         }
                                                                     }
                                                                     None => {
-                                                                        println!("  Unknown method {}", name);
+                                                                        debug!("  Unknown method {}", name);
                                                                     }
                                                                 }
                                                             },
                                                             _ => {
-                                                                println!("could not find class with name {}", class_name);
+                                                                debug!("could not find class with name {}", class_name);
                                                             }
                                                         }
                                                     },
@@ -966,28 +967,28 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                             }
                                         },
                                         _ => {
-                                            println!("  Unknown name index {}", *name_index);
+                                            debug!("  Unknown name index {}", *name_index);
                                         }
                                     }
                                 },
                                 _ => {
-                                    println!("Unknown name and type index {}", *name_and_type_index);
+                                    debug!("Unknown name and type index {}", *name_and_type_index);
                                 }
                             }
 
                         },
                         _ => {
-                            println!("Unknown class index {}", class_index);
+                            debug!("Unknown class index {}", class_index);
                         }
                     }
                 },
                 _ => {
-                    println!("Unknown class index {}", class_index);
+                    debug!("Unknown class index {}", class_index);
                 }
             }
         }
         _ => {
-            println!("Unknown method index {}", method_index);
+            debug!("Unknown method index {}", method_index);
         }
     }
 
@@ -997,80 +998,80 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
 fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, field_index: usize) -> Result<(), String> {
     match constant_pool_lookup(constant_pool, field_index) {
         Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
-            println!("  class={}", class_index);
-            println!("  name_and_type={}", name_and_type_index);
+            debug!("  class={}", class_index);
+            debug!("  name_and_type={}", name_and_type_index);
 
             match constant_pool_lookup(constant_pool, *class_index as usize) {
                 Some(ConstantPoolEntry::Classref(index)) => {
-                    println!("  classref={}", index);
+                    debug!("  classref={}", index);
                     match lookup_utf8_constant(constant_pool, *index as usize) {
                         Some(class_name) => {
-                            println!("  class_name={}", class_name);
+                            debug!("  class_name={}", class_name);
 
                             match constant_pool_lookup(constant_pool, *name_and_type_index as usize) {
                                 Some(ConstantPoolEntry::NameAndType{name_index, descriptor_index}) => {
-                                    println!("  name_index={}", name_index);
-                                    println!("  descriptor_index={}", descriptor_index);
+                                    debug!("  name_index={}", name_index);
+                                    debug!("  descriptor_index={}", descriptor_index);
 
                                     match lookup_utf8_constant(constant_pool, *name_index as usize) {
                                         Some(name) => {
-                                            println!("  name={}", name);
+                                            debug!("  name={}", name);
 
                                             match jvm.lookup_class(class_name) {
                                                 Some(class) => {
                                                     match class.fields.get(name) {
                                                         Some(value) => {
-                                                            // println!(" pushing value");
+                                                            // debug!(" pushing value");
                                                             frame.push_value(value.clone());
                                                             return Ok(());
                                                         },
                                                         None => {
-                                                            println!("  Unknown field {}", name);
+                                                            debug!("  Unknown field {}", name);
                                                         }
                                                     }
                                                 },
                                                 None => {
-                                                    println!("  Unknown class {}", class_name);
+                                                    debug!("  Unknown class {}", class_name);
                                                 }
                                             }
                                         },
                                         None => {
-                                            println!("  Unknown name index {}", *name_index);
+                                            debug!("  Unknown name index {}", *name_index);
                                         }
                                     }
 
                                     match lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
                                         Some(descriptor) => {
-                                            println!("  descriptor={}", descriptor);
+                                            debug!("  descriptor={}", descriptor);
                                         },
                                         None => {
-                                            println!("  Unknown descriptor index {}", *descriptor_index);
+                                            debug!("  Unknown descriptor index {}", *descriptor_index);
                                         }
                                     }
 
                                 },
                                 _ => {
-                                    println!("  Unknown name and type index {}", *name_and_type_index);
+                                    debug!("  Unknown name and type index {}", *name_and_type_index);
                                 }
                             }
 
                         },
                         _ => {
-                            println!("  Unknown classref {}", *index);
+                            debug!("  Unknown classref {}", *index);
                         }
                     }
                 },
                 _ => {
-                    println!("  Unknown classref {}", class_index);
+                    debug!("  Unknown classref {}", class_index);
                 }
             }
 
         },
         Some(entry) => {
-            println!("  {}", entry.name());
+            debug!("  {}", entry.name());
         },
         None => {
-            println!("  Unknown constant pool entry {}", field_index);
+            debug!("  Unknown constant pool entry {}", field_index);
         }
     }
 
@@ -1081,26 +1082,26 @@ fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index:
     if index > 0 && index < constant_pool.len() {
         match constant_pool_lookup(constant_pool, index) {
             Some(ConstantPoolEntry::Utf8(name)) => {
-                println!("Pushing constant utf8 {}", name);
+                debug!("Pushing constant utf8 {}", name);
             },
             Some(ConstantPoolEntry::Stringref(string_index)) => {
-                println!("Pushing constant string {}", string_index);
+                debug!("Pushing constant string {}", string_index);
                 match constant_pool_lookup(constant_pool, *string_index as usize) {
                     Some(ConstantPoolEntry::Utf8(name)) => {
-                        println!("Pushing constant utf8 '{}'", name);
+                        debug!("Pushing constant utf8 '{}'", name);
                         frame.push_value(RuntimeValue::String(name.clone()));
                         return Ok(());
                     },
                     None => {
-                        println!("no such index {}", string_index);
+                        debug!("no such index {}", string_index);
                     }
                     _ => {
-                        println!("constant pool index {} is invalid", string_index);
+                        debug!("constant pool index {} is invalid", string_index);
                     }
                 }
             },
             _ => {
-                println!("ERROR: unhandled constant {}", &constant_pool[index-1].name());
+                debug!("ERROR: unhandled constant {}", &constant_pool[index-1].name());
             }
         }
     } else {
@@ -1117,7 +1118,7 @@ fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<RuntimeValue, St
         RuntimeValue::Int(i1) => {
             match value2 {
                 RuntimeValue::Int(i2) => {
-                    println!("  iop {} {} = {}", i1, i2, op(i1, i2));
+                    debug!("  iop {} {} = {}", i1, i2, op(i1, i2));
                     return Ok(RuntimeValue::Int(op(i1, i2)));
                 },
                 _ => {
@@ -1148,12 +1149,12 @@ fn lookup_code_attribute(method: &MethodInfo) -> Option<&AttributeKind> {
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<RuntimeValue, String> {
     if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
         // FIXME: create frame based on max_stack and max_locals
-        println!("Code attribute");
-        println!("  max_stack={}", max_stack);
-        println!("  max_locals={}", max_locals);
-        println!("  code={}", code.len());
-        println!("  exception_table={}", exception_table.len());
-        println!("  attributes={}", attributes.len());
+        debug!("Code attribute");
+        debug!("  max_stack={}", max_stack);
+        debug!("  max_locals={}", max_locals);
+        debug!("  code={}", code.len());
+        debug!("  exception_table={}", exception_table.len());
+        debug!("  attributes={}", attributes.len());
 
         let mut pc = 0;
         while pc < code.len() {
@@ -1192,7 +1193,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 Opcodes::ILoad0 => {
                     pc += 1;
                     let value = frame.locals[0].clone();
-                    println!("  load0: loading value {:?}", value);
+                    debug!("  load0: loading value {:?}", value);
                     frame.push_value(value);
                 },
                 Opcodes::ILoad1 => {
@@ -1228,7 +1229,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     match invoke_static(constant_pool, frame, jvm, total)? {
                         RuntimeValue::Void => {},
                         r => {
-                            println!("got back value {:?}", r);
+                            debug!("got back value {:?}", r);
                             frame.stack.push(r);
                         }
                     }
@@ -1236,7 +1237,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 3;
                 },
                 Opcodes::GetStatic => {
-                    println!("Get static");
+                    debug!("Get static");
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1377,7 +1378,7 @@ fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<RuntimeValue, String
         */
         match lookup_utf8_constant(&jvm.constant_pool, jvm.methods[i].name_index as usize) {
             Some(method_name) => {
-                println!("Check method index={} name='{}' vs '{}'", i, method_name, name);
+                debug!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
 
                     let mut frame = createFrame(&jvm.methods[i])?;
