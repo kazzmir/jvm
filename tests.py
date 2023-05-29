@@ -74,7 +74,7 @@ def do_test(path):
         print(colorize("OK", 'green'))
 
 def main():
-    for path in os.listdir('tests'):
+    for path in sorted(os.listdir('tests')):
         full = os.path.join('tests', path)
         if os.path.isdir(full):
             do_test(full)
