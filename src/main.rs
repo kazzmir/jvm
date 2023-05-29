@@ -691,6 +691,7 @@ mod Opcodes {
     pub const IMul:u8 = 0x68; // imul
     pub const IDiv:u8 = 0x6c; // idiv
     pub const IInc:u8 = 0x84; // iinc
+    pub const TableSwitch:u8 = 0xaa; // tableswitch
     pub const IfICompareGreaterEqual:u8 = 0xa2; // if_icmpge
     pub const Goto:u8 = 0xa7; // goto
     pub const IReturn:u8 = 0xac; // ireturn
@@ -1019,6 +1020,12 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                     },
                                                                     JVMMethod::Bytecode(info) => {
                                                                         debug!("invoke bytecode method stack size {}", frame.stack.len());
+
+                                                                        if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
+                                                                            for _i in 0..((*max_locals as usize) - locals.len()) {
+                                                                                locals.push(RuntimeValue::Int(0));
+                                                                            }
+                                                                        }
 
                                                                         let mut newFrame = createFrame(info)?;
                                                                         newFrame.locals = locals;
@@ -1544,8 +1551,16 @@ fn do_icompare(frame: &mut Frame, pc: usize, offset: i16, compare: fn(i64, i64) 
     return Ok(pc + 3)
 }
 
-fn make_int(byte1:u8, byte2:u8) -> u16 {
+fn make_int16(byte1:u8, byte2:u8) -> u16 {
     return ((byte1 as u16) << 8) | (byte2 as u16)
+}
+
+fn make_int32(byte1:u8, byte2:u8, byte3:u8, byte4:u8) -> u32 {
+    let b1 = byte1 as u32;
+    let b2 = byte2 as u32;
+    let b3 = byte3 as u32;
+    let b4 = byte4 as u32;
+    return (b1 << 24) | (b2 << 16) | (b3 << 8) | b4;
 }
 
 fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst) -> Result<RuntimeValue, String> {
@@ -1647,12 +1662,51 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
                 },
+                Opcodes::TableSwitch => {
+                    let original_pc = pc;
+
+                    pc += 1;
+                    let padding = pc % 4;
+                    if padding != 0 {
+                        pc += 4 - padding;
+                    }
+
+                    let default = make_int32(code[pc], code[pc+1], code[pc+2], code[pc+3]);
+                    pc += 4;
+                    let low = make_int32(code[pc], code[pc+1], code[pc+2], code[pc+3]) as i64;
+                    pc += 4;
+                    let high = make_int32(code[pc], code[pc+1], code[pc+2], code[pc+3]) as i64;
+                    pc += 4;
+
+                    let mut offsets = Vec::new();
+                    for _ in low..=high {
+                        let offset = make_int32(code[pc], code[pc+1], code[pc+2], code[pc+3]);
+                        pc += 4;
+                        offsets.push(offset);
+                    }
+
+                    let index = frame.pop_value_force()?;
+
+                    match index {
+                        RuntimeValue::Int(i) => {
+                            if i < low || i > high {
+                                pc = (original_pc as i32 + default as i32) as usize;
+                            } else {
+                                let offset = offsets[(i - low) as usize];
+                                pc = (original_pc as i32 + offset as i32) as usize;
+                            }
+                        },
+                        _ => {
+                            return Err(format!("Invalid index for tableswitch: {:?}", index));
+                        }
+                    }
+                },
                 Opcodes::IfICompareGreaterEqual => {
-                    pc = do_icompare(frame, pc, make_int(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
+                    pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
                 },
                 Opcodes::Goto => {
                     let old = pc;
-                    let offset = make_int(code[pc+1], code[pc+2]);
+                    let offset = make_int16(code[pc+1], code[pc+2]);
                     pc = (pc as i16 + offset as i16) as usize;
                 },
                 Opcodes::ILoad => {
