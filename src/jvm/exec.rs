@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::rc;
 use std::cell;
 use std::fmt;
-use debug_print::debug_eprintln as debug;
 
+use crate::debug;
 use super::data::*;
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5

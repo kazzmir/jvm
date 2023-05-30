@@ -1,11 +1,14 @@
 use std::env;
 use std::fmt;
-use debug_print::debug_eprintln as debug;
+// use debug_print::debug_eprintln as debug1;
 
 mod jvm;
 
 use jvm::data::*;
 use jvm::exec::*;
+
+mod debug;
+use debug::*;
 
 /*
 fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{

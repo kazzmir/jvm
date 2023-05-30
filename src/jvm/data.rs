@@ -1,5 +1,6 @@
 use std::io::{Read};
-use debug_print::debug_eprintln as debug;
+
+use crate::debug;
 
 pub struct ConstantPoolInfo {
     tag: u8,
