@@ -8,44 +8,44 @@ use super::data::*;
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 pub mod Opcodes {
-    pub const IConst0:u8 = 0x3; // iconst_0
-    pub const IConst1:u8 = 0x4; // iconst_1
-    pub const IConst2:u8 = 0x5; // iconst_2
-    pub const IConst3:u8 = 0x6; // iconst_3
-    pub const IConst4:u8 = 0x7; // iconst_4
-    pub const IConst5:u8 = 0x8; // iconst_5
-    pub const PushByte:u8 = 0x10; // bipush
-    pub const PushRuntimeConstant:u8 = 0x12; // ldc
-    pub const ILoad:u8 = 0x15; // iload
-    pub const ILoad0:u8 = 0x1a; // iload_0
-    pub const ILoad1:u8 = 0x1b; // iload_1
-    pub const ILoad2:u8 = 0x1c; // iload_2
-    pub const ILoad3:u8 = 0x1d; // iload_3
-    pub const ALoad0:u8 = 0x2a; // aload_0
-    pub const ALoad1:u8 = 0x2b; // aload_1
-    pub const IStore:u8 = 0x36; // istore
-    pub const IStore0:u8 = 0x3b; // istore_0
-    pub const IStore1:u8 = 0x3c; // istore_1
-    pub const IStore2:u8 = 0x3d; // istore_2
-    pub const IStore3:u8 = 0x3e; // istore_3
-    pub const AStore1:u8 = 0x4c; // astore_1
-    pub const Dup:u8 = 0x59; // dup
-    pub const IAdd:u8 = 0x60; // iadd
-    pub const IMul:u8 = 0x68; // imul
-    pub const IDiv:u8 = 0x6c; // idiv
-    pub const IInc:u8 = 0x84; // iinc
-    pub const TableSwitch:u8 = 0xaa; // tableswitch
-    pub const IfICompareGreaterEqual:u8 = 0xa2; // if_icmpge
-    pub const Goto:u8 = 0xa7; // goto
-    pub const IReturn:u8 = 0xac; // ireturn
-    pub const Return:u8 = 0xb1; // return
-    pub const GetStatic:u8 = 0xb2; // getstatic
-    pub const GetField:u8 = 0xb4; // getfield
-    pub const PutField:u8 = 0xb5; // putfield
-    pub const InvokeVirtual:u8 = 0xb6; // invokevirtual
-    pub const InvokeSpecial:u8 = 0xb7; // invokespecial
-    pub const InvokeStatic:u8 = 0xb8; // invokestatic
-    pub const New:u8 = 0xbb; // new
+    pub const ICONST0:u8 = 0x3; // iconst_0
+    pub const ICONST1:u8 = 0x4; // iconst_1
+    pub const ICONST2:u8 = 0x5; // iconst_2
+    pub const ICONST3:u8 = 0x6; // iconst_3
+    pub const ICONST4:u8 = 0x7; // iconst_4
+    pub const ICONST5:u8 = 0x8; // iconst_5
+    pub const PUSHBYTE:u8 = 0x10; // bipush
+    pub const PUSHRUNTIMECONSTANT:u8 = 0x12; // ldc
+    pub const ILOAD:u8 = 0x15; // iload
+    pub const ILOAD0:u8 = 0x1a; // iload_0
+    pub const ILOAD1:u8 = 0x1b; // iload_1
+    pub const ILOAD2:u8 = 0x1c; // iload_2
+    pub const ILOAD3:u8 = 0x1d; // iload_3
+    pub const ALOAD0:u8 = 0x2a; // aload_0
+    pub const ALOAD1:u8 = 0x2b; // aload_1
+    pub const ISTORE:u8 = 0x36; // istore
+    pub const ISTORE0:u8 = 0x3b; // istore_0
+    pub const ISTORE1:u8 = 0x3c; // istore_1
+    pub const ISTORE2:u8 = 0x3d; // istore_2
+    pub const ISTORE3:u8 = 0x3e; // istore_3
+    pub const ASTORE1:u8 = 0x4c; // astore_1
+    pub const DUP:u8 = 0x59; // dup
+    pub const IADD:u8 = 0x60; // iadd
+    pub const IMUL:u8 = 0x68; // imul
+    pub const IDIV:u8 = 0x6c; // idiv
+    pub const IINC:u8 = 0x84; // iinc
+    pub const TABLESWITCH:u8 = 0xaa; // tableswitch
+    pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
+    pub const GOTO:u8 = 0xa7; // goto
+    pub const IRETURN:u8 = 0xac; // ireturn
+    pub const RETURN:u8 = 0xb1; // return
+    pub const GETSTATIC:u8 = 0xb2; // getstatic
+    pub const GETFIELD:u8 = 0xb4; // getfield
+    pub const PUTFIELD:u8 = 0xb5; // putfield
+    pub const INVOKEVIRTUAL:u8 = 0xb6; // invokevirtual
+    pub const INVOKESPECIAL:u8 = 0xb7; // invokespecial
+    pub const INVOKESTATIC:u8 = 0xb8; // invokestatic
+    pub const NEW:u8 = 0xbb; // new
 }
 
 #[derive(Clone)]
@@ -108,7 +108,7 @@ enum JVMMethod<'a>{
     Bytecode(&'a MethodInfo),
 }
 
-fn createJvmClass(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
+fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
     match constant_pool_lookup(&jvmclass.constant_pool, jvmclass.this_class as usize) {
         Some(ConstantPoolEntry::Classref(class_index)) => {
             match constant_pool_lookup(&jvmclass.constant_pool, *class_index as usize) {
@@ -252,9 +252,9 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                             }
                                                                         }
 
-                                                                        let mut newFrame = createFrame(info)?;
-                                                                        newFrame.locals = locals;
-                                                                        return do_execute_method(&info, constant_pool, &mut newFrame, jvm);
+                                                                        let mut new_frame = create_frame(info)?;
+                                                                        new_frame.locals = locals;
+                                                                        return do_execute_method(&info, constant_pool, &mut new_frame, jvm);
                                                                     }
                                                                 }
                                                             },
@@ -342,9 +342,9 @@ fn invoke_special(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                             },
                                                                             JVMMethod::Bytecode(info) => {
                                                                                 debug!("invoke bytecode method '{}'", name);
-                                                                                let mut newFrame = createFrame(info)?;
-                                                                                newFrame.locals = locals;
-                                                                                do_execute_method(&info, constant_pool, &mut newFrame, jvm)?;
+                                                                                let mut new_frame = create_frame(info)?;
+                                                                                new_frame.locals = locals;
+                                                                                do_execute_method(&info, constant_pool, &mut new_frame, jvm)?;
                                                                                 return Ok(());
                                                                             }
                                                                         }
@@ -443,7 +443,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                             },
                                                                             JVMMethod::Bytecode(info) => {
                                                                                 debug!("invoke bytecode method '{}'", name);
-                                                                                let mut newFrame = createFrame(info)?;
+                                                                                let mut new_frame = create_frame(info)?;
 
                                                                                 // fill in the rest of the locals array with 0
                                                                                 if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
@@ -452,8 +452,8 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                                     }
                                                                                 }
 
-                                                                                newFrame.locals = locals;
-                                                                                return do_execute_method(&info, constant_pool, &mut newFrame, jvm)
+                                                                                new_frame.locals = locals;
+                                                                                return do_execute_method(&info, constant_pool, &mut new_frame, jvm)
                                                                             }
                                                                         }
                                                                     }
@@ -802,36 +802,36 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
         while pc < code.len() {
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
             match code[pc] {
-                Opcodes::IConst0 => {
+                Opcodes::ICONST0 => {
                     frame.push_value(RuntimeValue::Int(0));
                     pc += 1;
                 },
-                Opcodes::IConst1 => {
+                Opcodes::ICONST1 => {
                     frame.push_value(RuntimeValue::Int(1));
                     pc += 1;
                 },
-                Opcodes::IConst2 => {
+                Opcodes::ICONST2 => {
                     frame.push_value(RuntimeValue::Int(2));
                     pc += 1;
                 },
-                Opcodes::IConst3 => {
+                Opcodes::ICONST3 => {
                     frame.push_value(RuntimeValue::Int(3));
                     pc += 1;
                 },
-                Opcodes::IConst4 => {
+                Opcodes::ICONST4 => {
                     frame.push_value(RuntimeValue::Int(4));
                     pc += 1;
                 },
-                Opcodes::IConst5 => {
+                Opcodes::ICONST5 => {
                     frame.push_value(RuntimeValue::Int(5));
                     pc += 1;
                 },
-                Opcodes::PushByte => {
+                Opcodes::PUSHBYTE => {
                     let value = code[pc + 1] as i64;
                     frame.push_value(RuntimeValue::Int(value));
                     pc += 2;
                 },
-                Opcodes::IReturn => {
+                Opcodes::IRETURN => {
                     pc += 1;
 
                     // let value = frame.pop_value_force()?; 
@@ -840,54 +840,54 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
                 },
-                Opcodes::Dup => {
+                Opcodes::DUP => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.push_value(value.clone());
                     frame.push_value(value);
                 },
-                Opcodes::AStore1 => {
+                Opcodes::ASTORE1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
                 },
-                Opcodes::IStore => {
+                Opcodes::ISTORE => {
                     let index = code[pc + 1] as usize;
                     let value = frame.pop_value_force()?;
                     frame.locals[index] = value;
                     pc += 2;
                 },
-                Opcodes::IStore0 => {
+                Opcodes::ISTORE0 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[0] = value;
                 },
-                Opcodes::IStore1 => {
+                Opcodes::ISTORE1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
                 },
-                Opcodes::IStore2 => {
+                Opcodes::ISTORE2 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[2] = value;
                 },
-                Opcodes::IStore3 => {
+                Opcodes::ISTORE3 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[3] = value;
                 },
-                Opcodes::ALoad0 => {
+                Opcodes::ALOAD0 => {
                     pc += 1;
                     let value = frame.locals[0].clone();
                     frame.push_value(value);
                 },
-                Opcodes::ALoad1 => {
+                Opcodes::ALOAD1 => {
                     pc += 1;
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
                 },
-                Opcodes::TableSwitch => {
+                Opcodes::TABLESWITCH => {
                     let original_pc = pc;
 
                     pc += 1;
@@ -928,57 +928,57 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         }
                     }
                 },
-                Opcodes::IfICompareGreaterEqual => {
+                Opcodes::IFICOMPAREGREATEREQUAL => {
                     pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
                 },
-                Opcodes::Goto => {
+                Opcodes::GOTO => {
                     let old = pc;
                     let offset = make_int16(code[pc+1], code[pc+2]);
                     pc = (pc as i16 + offset as i16) as usize;
                 },
-                Opcodes::ILoad => {
+                Opcodes::ILOAD => {
                     let index = code[pc + 1] as usize;
                     let value = frame.locals[index].clone();
                     frame.push_value(value);
                     pc += 2;
                 },
-                Opcodes::ILoad0 => {
+                Opcodes::ILOAD0 => {
                     pc += 1;
                     let value = frame.locals[0].clone();
                     debug!("  load0: loading value {:?}", value);
                     frame.push_value(value);
                 },
-                Opcodes::ILoad1 => {
+                Opcodes::ILOAD1 => {
                     pc += 1;
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
                 },
-                Opcodes::ILoad2 => {
+                Opcodes::ILOAD2 => {
                     pc += 1;
                     let value = frame.locals[2].clone();
                     frame.push_value(value);
                 },
-                Opcodes::ILoad3 => {
+                Opcodes::ILOAD3 => {
                     pc += 1;
                     let value = frame.locals[3].clone();
                     frame.push_value(value);
                 },
-                Opcodes::IAdd => {
+                Opcodes::IADD => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 + i2)?;
                     frame.stack.push(value);
                 },
-                Opcodes::IMul => {
+                Opcodes::IMUL => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 * i2)?;
                     frame.stack.push(value);
                 },
-                Opcodes::IDiv => {
+                Opcodes::IDIV => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 / i2)?;
                     frame.stack.push(value);
                 },
-                Opcodes::IInc => {
+                Opcodes::IINC => {
                     let index = code[pc + 1] as usize;
                     let value = frame.locals[index].clone();
                     let inc = code[pc + 2] as i64;
@@ -992,7 +992,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     }
                     pc += 3;
                 },
-                Opcodes::New => {
+                Opcodes::NEW => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1001,7 +1001,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::GetField => {
+                Opcodes::GETFIELD => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1009,7 +1009,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(getfield(constant_pool, jvm, total, objectref)?);
                     pc += 3;
                 },
-                Opcodes::PutField => {
+                Opcodes::PUTFIELD => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1021,14 +1021,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::InvokeSpecial => {
+                Opcodes::INVOKESPECIAL => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
                     invoke_special(constant_pool, frame, jvm, total)?;
                     pc += 3;
                 },
-                Opcodes::InvokeStatic => {
+                Opcodes::INVOKESTATIC => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1043,7 +1043,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::GetStatic => {
+                Opcodes::GETSTATIC => {
                     debug!("Get static");
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
@@ -1055,7 +1055,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 1;
                 },
-                Opcodes::InvokeVirtual => {
+                Opcodes::INVOKEVIRTUAL => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1069,10 +1069,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::Return => {
+                Opcodes::RETURN => {
                     return Ok(RuntimeValue::Void);
                 },
-                Opcodes::PushRuntimeConstant => {
+                Opcodes::PUSHRUNTIMECONSTANT => {
                     let index = code[pc+1] as usize;
                     push_runtime_constant(constant_pool, frame, index)?;
                     pc += 2;
@@ -1090,14 +1090,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
     return Ok(RuntimeValue::Void);
 }
 
-fn createStdoutObject() -> rc::Rc<cell::RefCell<JVMObject>> {
+fn create_stdout_object() -> rc::Rc<cell::RefCell<JVMObject>> {
     return rc::Rc::new(cell::RefCell::new(JVMObject{
         class: "java/io/PrintStream".to_string(),
         fields: HashMap::new()
     }));
 }
 
-fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
+fn create_java_io_print_stream<'a>() -> JVMClass<'a> {
     let mut methods = HashMap::new();
     methods.insert("println".to_string(), JVMMethod::Native(|args: &[RuntimeValue]| {
         for arg in &args[1..] {
@@ -1126,10 +1126,10 @@ fn createJavaIoPrintStream<'a>() -> JVMClass<'a> {
     }
 }
 
-fn createJavaLangSystem<'a>() -> JVMClass<'a> {
+fn create_java_lang_system<'a>() -> JVMClass<'a> {
     let mut fields = HashMap::new();
 
-    fields.insert("out".to_string(), RuntimeValue::Object(createStdoutObject()));
+    fields.insert("out".to_string(), RuntimeValue::Object(create_stdout_object()));
 
     let mut methods = HashMap::new();
 
@@ -1140,7 +1140,7 @@ fn createJavaLangSystem<'a>() -> JVMClass<'a> {
     };
 }
 
-fn createFrame(method: &MethodInfo) -> Result<Frame, String> {
+fn create_frame(method: &MethodInfo) -> Result<Frame, String> {
     if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
         let mut locals = Vec::new();
 
@@ -1157,7 +1157,7 @@ fn createFrame(method: &MethodInfo) -> Result<Frame, String> {
     return Err("no code attribute".to_string());
 }
 
-fn createJavaLangObject<'a>() -> JVMClass<'a> {
+fn create_java_lang_object<'a>() -> JVMClass<'a> {
     let mut fields = HashMap::new();
     let mut methods = HashMap::new();
 
@@ -1172,12 +1172,12 @@ fn createJavaLangObject<'a>() -> JVMClass<'a> {
     };
 }
 
-fn createRuntimeConst<'a>() -> RuntimeConst<'a> {
+fn create_runtime_const<'a>() -> RuntimeConst<'a> {
     let mut classes = HashMap::new();
 
-    classes.insert("java/lang/System".to_string(), createJavaLangSystem());
-    classes.insert("java/io/PrintStream".to_string(), createJavaIoPrintStream());
-    classes.insert("java/lang/Object".to_string(), createJavaLangObject());
+    classes.insert("java/lang/System".to_string(), create_java_lang_system());
+    classes.insert("java/io/PrintStream".to_string(), create_java_io_print_stream());
+    classes.insert("java/lang/Object".to_string(), create_java_lang_object());
 
     return RuntimeConst{
         classes: classes,
@@ -1204,10 +1204,10 @@ pub fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<RuntimeValue, St
                 debug!("Check method index={} name='{}' vs '{}'", i, method_name, name);
                 if method_name == name {
 
-                    let mut frame = createFrame(&jvm.methods[i])?;
+                    let mut frame = create_frame(&jvm.methods[i])?;
 
-                    let mut runtime = createRuntimeConst();
-                    runtime.add_class(createJvmClass(jvm)?);
+                    let mut runtime = create_runtime_const();
+                    runtime.add_class(create_jvm_class(jvm)?);
 
                     return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &runtime);
                 }
