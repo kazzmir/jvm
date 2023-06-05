@@ -1,6 +1,8 @@
 use std::io;
 use std::env;
 
+use myjvm::jvm;
+
 fn read_u32_le(file: &mut dyn std::io::Read) -> u32 {
     let mut buf = [0; 4];
     file.read_exact(&mut buf).unwrap();

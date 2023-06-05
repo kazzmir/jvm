@@ -144,7 +144,7 @@ struct JVMClass<'a>{
     fields: HashMap<String, RuntimeValue>,
 }
 
-struct JVMObject{
+pub struct JVMObject{
     class: String,
     fields: HashMap<String, RuntimeValue>,
 }

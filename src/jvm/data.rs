@@ -138,13 +138,13 @@ pub struct ExceptionTableEntry {
     catch_type: u16,
 }
 
-struct LineNumberTableEntry {
+pub struct LineNumberTableEntry {
     start_pc: u16,
     line_number: u16,
 }
 
 // FIXME: change this to an enum
-struct StackMapFrameEntry{
+pub struct StackMapFrameEntry{
     // TODO
 }
 

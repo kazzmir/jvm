@@ -1,4 +1,12 @@
 [package]
-name = "jvm"
+name = "myjvm"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "jimage"
+path = "src/jimage/main.rs"
+
+[[bin]]
+name = "jvm"
+path = "src/main.rs"
