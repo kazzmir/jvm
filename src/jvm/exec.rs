@@ -7,7 +7,7 @@ use crate::debug;
 use super::data::*;
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
-pub mod Opcodes {
+pub mod opcodes {
     pub const ICONST0:u8 = 0x3; // iconst_0
     pub const ICONST1:u8 = 0x4; // iconst_1
     pub const ICONST2:u8 = 0x5; // iconst_2
@@ -229,7 +229,7 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                             if let Some(descriptor) = lookup_utf8_constant(constant_pool, *descriptor_index as usize) {
                                                 let method_descriptor = parse_method_descriptor(descriptor)?;
                                                 let mut locals = Vec::new();
-                                                for i in 0..method_descriptor.parameters.len() {
+                                                for _i in 0..method_descriptor.parameters.len() {
                                                     locals.push(frame.pop_value_force()?);
                                                 }
                                                 locals.reverse();
@@ -246,7 +246,7 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                     JVMMethod::Bytecode(info) => {
                                                                         debug!("invoke bytecode method stack size {}", frame.stack.len());
 
-                                                                        if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
+                                                                        if let Some(AttributeKind::Code { max_stack: _, max_locals, code: _, exception_table: _, attributes: _ }) = lookup_code_attribute(info) {
                                                                             for _i in 0..((*max_locals as usize) - locals.len()) {
                                                                                 locals.push(RuntimeValue::Int(0));
                                                                             }
@@ -446,7 +446,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                                 let mut new_frame = create_frame(info)?;
 
                                                                                 // fill in the rest of the locals array with 0
-                                                                                if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(info) {
+                                                                                if let Some(AttributeKind::Code { max_stack: _, max_locals, code: _, exception_table: _, attributes: _ }) = lookup_code_attribute(info) {
                                                                                     for _i in 0..((*max_locals as usize) - locals.len()) {
                                                                                         locals.push(RuntimeValue::Int(0));
                                                                                     }
@@ -678,7 +678,7 @@ fn create_new_object(constant_pool: &ConstantPool, jvm: &RuntimeConst, index: us
 fn lookup_code_attribute(method: &MethodInfo) -> Option<&AttributeKind> {
     for i in 0..method.attributes.len() {
         match &method.attributes[i] {
-            AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes } => {
+            AttributeKind::Code { max_stack: _, max_locals: _, code: _, exception_table: _, attributes: _ } => {
                 return Some(&method.attributes[i]);
             },
             _ => {
@@ -764,7 +764,7 @@ fn do_icompare(frame: &mut Frame, pc: usize, offset: i16, compare: fn(i64, i64) 
     let value1 = frame.pop_value_force()?;
     match (value1, value2) {
         (RuntimeValue::Int(i1), RuntimeValue::Int(i2)) => {
-            if i1 >= i2 {
+            if compare(i1, i2) {
                 return Ok((pc as i16 + offset) as usize);
             }
         }
@@ -802,36 +802,36 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
         while pc < code.len() {
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
             match code[pc] {
-                Opcodes::ICONST0 => {
+                opcodes::ICONST0 => {
                     frame.push_value(RuntimeValue::Int(0));
                     pc += 1;
                 },
-                Opcodes::ICONST1 => {
+                opcodes::ICONST1 => {
                     frame.push_value(RuntimeValue::Int(1));
                     pc += 1;
                 },
-                Opcodes::ICONST2 => {
+                opcodes::ICONST2 => {
                     frame.push_value(RuntimeValue::Int(2));
                     pc += 1;
                 },
-                Opcodes::ICONST3 => {
+                opcodes::ICONST3 => {
                     frame.push_value(RuntimeValue::Int(3));
                     pc += 1;
                 },
-                Opcodes::ICONST4 => {
+                opcodes::ICONST4 => {
                     frame.push_value(RuntimeValue::Int(4));
                     pc += 1;
                 },
-                Opcodes::ICONST5 => {
+                opcodes::ICONST5 => {
                     frame.push_value(RuntimeValue::Int(5));
                     pc += 1;
                 },
-                Opcodes::PUSHBYTE => {
+                opcodes::PUSHBYTE => {
                     let value = code[pc + 1] as i64;
                     frame.push_value(RuntimeValue::Int(value));
                     pc += 2;
                 },
-                Opcodes::IRETURN => {
+                opcodes::IRETURN => {
                     pc += 1;
 
                     // let value = frame.pop_value_force()?; 
@@ -840,54 +840,54 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
                 },
-                Opcodes::DUP => {
+                opcodes::DUP => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.push_value(value.clone());
                     frame.push_value(value);
                 },
-                Opcodes::ASTORE1 => {
+                opcodes::ASTORE1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
                 },
-                Opcodes::ISTORE => {
+                opcodes::ISTORE => {
                     let index = code[pc + 1] as usize;
                     let value = frame.pop_value_force()?;
                     frame.locals[index] = value;
                     pc += 2;
                 },
-                Opcodes::ISTORE0 => {
+                opcodes::ISTORE0 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[0] = value;
                 },
-                Opcodes::ISTORE1 => {
+                opcodes::ISTORE1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[1] = value;
                 },
-                Opcodes::ISTORE2 => {
+                opcodes::ISTORE2 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[2] = value;
                 },
-                Opcodes::ISTORE3 => {
+                opcodes::ISTORE3 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[3] = value;
                 },
-                Opcodes::ALOAD0 => {
+                opcodes::ALOAD0 => {
                     pc += 1;
                     let value = frame.locals[0].clone();
                     frame.push_value(value);
                 },
-                Opcodes::ALOAD1 => {
+                opcodes::ALOAD1 => {
                     pc += 1;
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
                 },
-                Opcodes::TABLESWITCH => {
+                opcodes::TABLESWITCH => {
                     let original_pc = pc;
 
                     pc += 1;
@@ -928,57 +928,57 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         }
                     }
                 },
-                Opcodes::IFICOMPAREGREATEREQUAL => {
+                opcodes::IFICOMPAREGREATEREQUAL => {
                     pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
                 },
-                Opcodes::GOTO => {
+                opcodes::GOTO => {
                     let old = pc;
                     let offset = make_int16(code[pc+1], code[pc+2]);
                     pc = (pc as i16 + offset as i16) as usize;
                 },
-                Opcodes::ILOAD => {
+                opcodes::ILOAD => {
                     let index = code[pc + 1] as usize;
                     let value = frame.locals[index].clone();
                     frame.push_value(value);
                     pc += 2;
                 },
-                Opcodes::ILOAD0 => {
+                opcodes::ILOAD0 => {
                     pc += 1;
                     let value = frame.locals[0].clone();
                     debug!("  load0: loading value {:?}", value);
                     frame.push_value(value);
                 },
-                Opcodes::ILOAD1 => {
+                opcodes::ILOAD1 => {
                     pc += 1;
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
                 },
-                Opcodes::ILOAD2 => {
+                opcodes::ILOAD2 => {
                     pc += 1;
                     let value = frame.locals[2].clone();
                     frame.push_value(value);
                 },
-                Opcodes::ILOAD3 => {
+                opcodes::ILOAD3 => {
                     pc += 1;
                     let value = frame.locals[3].clone();
                     frame.push_value(value);
                 },
-                Opcodes::IADD => {
+                opcodes::IADD => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 + i2)?;
                     frame.stack.push(value);
                 },
-                Opcodes::IMUL => {
+                opcodes::IMUL => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 * i2)?;
                     frame.stack.push(value);
                 },
-                Opcodes::IDIV => {
+                opcodes::IDIV => {
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 / i2)?;
                     frame.stack.push(value);
                 },
-                Opcodes::IINC => {
+                opcodes::IINC => {
                     let index = code[pc + 1] as usize;
                     let value = frame.locals[index].clone();
                     let inc = code[pc + 2] as i64;
@@ -992,7 +992,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     }
                     pc += 3;
                 },
-                Opcodes::NEW => {
+                opcodes::NEW => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1001,7 +1001,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::GETFIELD => {
+                opcodes::GETFIELD => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1009,7 +1009,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(getfield(constant_pool, jvm, total, objectref)?);
                     pc += 3;
                 },
-                Opcodes::PUTFIELD => {
+                opcodes::PUTFIELD => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1021,14 +1021,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::INVOKESPECIAL => {
+                opcodes::INVOKESPECIAL => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
                     invoke_special(constant_pool, frame, jvm, total)?;
                     pc += 3;
                 },
-                Opcodes::INVOKESTATIC => {
+                opcodes::INVOKESTATIC => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1043,7 +1043,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::GETSTATIC => {
+                opcodes::GETSTATIC => {
                     debug!("Get static");
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
@@ -1055,7 +1055,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 1;
                 },
-                Opcodes::INVOKEVIRTUAL => {
+                opcodes::INVOKEVIRTUAL => {
                     let b1 = code[pc+1] as usize;
                     let b2 = code[pc+2] as usize;
                     let total = (b1 << 8) | b2;
@@ -1069,10 +1069,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
-                Opcodes::RETURN => {
+                opcodes::RETURN => {
                     return Ok(RuntimeValue::Void);
                 },
-                Opcodes::PUSHRUNTIMECONSTANT => {
+                opcodes::PUSHRUNTIMECONSTANT => {
                     let index = code[pc+1] as usize;
                     push_runtime_constant(constant_pool, frame, index)?;
                     pc += 2;
@@ -1141,7 +1141,7 @@ fn create_java_lang_system<'a>() -> JVMClass<'a> {
 }
 
 fn create_frame(method: &MethodInfo) -> Result<Frame, String> {
-    if let Some(AttributeKind::Code { max_stack, max_locals, code, exception_table, attributes }) = lookup_code_attribute(method) {
+    if let Some(AttributeKind::Code { max_stack: _, max_locals, code: _, exception_table: _, attributes: _ }) = lookup_code_attribute(method) {
         let mut locals = Vec::new();
 
         for _i in 0..*max_locals {

@@ -1,6 +1,4 @@
 use std::env;
-use std::fmt;
-// use debug_print::debug_eprintln as debug1;
 
 mod jvm;
 
@@ -8,19 +6,6 @@ use jvm::data::*;
 use jvm::exec::*;
 
 mod debug;
-use debug::*;
-
-/*
-fn lookup_method_name(jvm: &JVMClassFile, method_index: usize) -> Option<&str>{
-    if method_index < jvm.methods.len() {
-        let method = &jvm.methods[method_index];
-        let name_index = method.name_index as usize;
-        return lookup_utf8_constant(&jvm.constant_pool, name_index)
-    }
-
-    return None
-}
-*/
 
 fn main() {
     let args: Vec<String> = env::args().collect();

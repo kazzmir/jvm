@@ -124,12 +124,12 @@ fn read_u8(file: &mut dyn std::io::Read) -> u8 {
     u8::from_be_bytes(buf)
 }
 
-const CONSTANT_Classref:u8 = 7;
-const CONSTANT_Methodref:u8 = 10;
-const CONSTANT_NameAndType:u8 = 12;
-const CONSTANT_Utf8:u8 = 1;
-const CONSTANT_Fieldref:u8 = 9;
-const CONSTANT_String:u8 = 8;
+const CONSTANT_CLASSREF:u8 = 7;
+const CONSTANT_METHODREF:u8 = 10;
+const CONSTANT_NAMEANDTYPE:u8 = 12;
+const CONSTANT_UTF8:u8 = 1;
+const CONSTANT_FIELDREF:u8 = 9;
+const CONSTANT_STRING:u8 = 8;
 
 pub struct ExceptionTableEntry {
     start_pc: u16,
@@ -338,7 +338,8 @@ fn read_attribute(file: &mut dyn std::io::Read, constant_pool: &ConstantPool) ->
             });
         },
         Some("SourceFile") => {
-            result.bytes().collect::<Vec<_>>();
+            // result.bytes().collect::<Vec<_>>();
+            result.bytes().for_each(drop);
             return Ok(AttributeKind::SourceFile{
             });
         },
@@ -354,7 +355,8 @@ fn read_attribute(file: &mut dyn std::io::Read, constant_pool: &ConstantPool) ->
             });
         },
         Some(something) => {
-            result.bytes().collect::<Vec<_>>();
+            // result.bytes().collect::<Vec<_>>();
+            result.bytes().for_each(drop);
             return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("unknown attribute '{}'", something)));
         },
         _ => {
@@ -443,19 +445,19 @@ pub fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> 
                 let tag = read_u8(&mut file);
                 // println!("Read constant tag {0}", tag);
                 match tag {
-                    CONSTANT_Classref => {
+                    CONSTANT_CLASSREF => {
                         // name index
                         let name = read_u16_bigendian(&mut file);
                         jvm_class_file.constant_pool.push(ConstantPoolEntry::Classref(name));
                     },
-                    CONSTANT_Methodref => {
+                    CONSTANT_METHODREF => {
                         // class index
                         let class = read_u16_bigendian(&mut file);
                         let name_and_type = read_u16_bigendian(&mut file);
                         jvm_class_file.constant_pool.push(ConstantPoolEntry::Methodref(class, name_and_type));
                     },
 
-                    CONSTANT_Utf8 => {
+                    CONSTANT_UTF8 => {
                         // length
                         // constant_pool_info.info.push(read_u8(&mut file));
                         // constant_pool_info.info.push(read_u8(&mut file));
@@ -508,19 +510,19 @@ pub fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> 
                         }
                         */
                     },
-                    CONSTANT_String => {
+                    CONSTANT_STRING => {
                         // string index
                         let index = read_u16_bigendian(&mut file);
                         jvm_class_file.constant_pool.push(ConstantPoolEntry::Stringref(index));
                     },
-                    CONSTANT_Fieldref => {
+                    CONSTANT_FIELDREF => {
                         // class index
                         let class = read_u16_bigendian(&mut file);
                         // name and type index
                         let name_and_type = read_u16_bigendian(&mut file);
                         jvm_class_file.constant_pool.push(ConstantPoolEntry::Fieldref{class_index:class, name_and_type_index:name_and_type});
                     },
-                    CONSTANT_NameAndType => {
+                    CONSTANT_NAMEANDTYPE => {
                         // name index
                         let name = read_u16_bigendian(&mut file);
                         // descriptor index
