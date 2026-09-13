@@ -25,6 +25,15 @@ pub mod opcodes {
     pub const DSTORE3:u8 = 0x4a; // dstore_3
     pub const DASTORE:u8 = 0x52; // dastore
     pub const DADD:u8 = 0x63; // dadd
+    pub const DSUB:u8 = 0x67; // dsub
+    pub const DMUL:u8 = 0x6b; // dmul
+    pub const DDIV:u8 = 0x6f; // ddiv
+    pub const DREM:u8 = 0x73; // drem
+    pub const DNEG:u8 = 0x77; // dneg
+    pub const DCMPL:u8 = 0x97; // dcmpl
+    pub const DCMPG:u8 = 0x98; // dcmpg
+    pub const IFGE:u8 = 0x9c; // ifge
+    pub const IFLE:u8 = 0x9e; // ifle
     pub const I2D:u8 = 0x87; // i2d
     pub const D2I:u8 = 0x8e; // d2i
     pub const D2L:u8 = 0x8f; // d2l
@@ -1156,16 +1165,60 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     }
                     pc += 1;
                 },
-                opcodes::DADD => {
+                opcodes::DADD | opcodes::DSUB | opcodes::DMUL | opcodes::DDIV | opcodes::DREM => {
                     let right = frame.pop_value_force()?;
                     let left = frame.pop_value_force()?;
                     match (left, right) {
                         (RuntimeValue::Double(left), RuntimeValue::Double(right)) => {
-                            frame.push_value(RuntimeValue::Double(left + right));
+                            let value = match code[pc] {
+                                opcodes::DADD => left + right,
+                                opcodes::DSUB => left - right,
+                                opcodes::DMUL => left * right,
+                                opcodes::DDIV => left / right,
+                                _ => left % right,
+                            };
+                            frame.push_value(RuntimeValue::Double(value));
                         },
-                        _ => return Err("dadd requires doubles".to_string()),
+                        _ => return Err("double arithmetic requires doubles".to_string()),
                     }
                     pc += 1;
+                },
+                opcodes::DNEG => {
+                    match frame.pop_value_force()? {
+                        RuntimeValue::Double(value) => frame.push_value(RuntimeValue::Double(-value)),
+                        _ => return Err("dneg requires a double".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::DCMPL | opcodes::DCMPG => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    match (left, right) {
+                        (RuntimeValue::Double(left), RuntimeValue::Double(right)) => {
+                            let result = match left.partial_cmp(&right) {
+                                Some(std::cmp::Ordering::Less) => -1,
+                                Some(std::cmp::Ordering::Equal) => 0,
+                                Some(std::cmp::Ordering::Greater) => 1,
+                                None => if code[pc] == opcodes::DCMPL { -1 } else { 1 },
+                            };
+                            frame.push_value(RuntimeValue::Int(result));
+                        },
+                        _ => return Err("double comparison requires doubles".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::IFGE | opcodes::IFLE => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Int(value) => value,
+                        _ => return Err("integer branch requires an integer".to_string()),
+                    };
+                    let taken = if code[pc] == opcodes::IFGE { value >= 0 } else { value <= 0 };
+                    if taken {
+                        let offset = make_int16(code[pc + 1], code[pc + 2]) as i16;
+                        pc = (pc as isize + offset as isize) as usize;
+                    } else {
+                        pc += 3;
+                    }
                 },
                 opcodes::CHECKCAST => {
                     let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
