@@ -5,6 +5,7 @@ public class Main {
         float two = 2.0f; // fconst_2
 
         System.out.println((double) one); // f2d
+        System.out.println((long) one); // f2l
         System.out.println((int) one); // f2i
         System.out.println((float) one); // No-op: the JVM has no f2f instruction.
 

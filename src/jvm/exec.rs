@@ -67,6 +67,7 @@ pub mod opcodes {
     pub const FREM:u8 = 0x72; // frem
     pub const FNEG:u8 = 0x76; // fneg
     pub const F2I:u8 = 0x8b; // f2i
+    pub const F2L:u8 = 0x8c; // f2l
     pub const F2D:u8 = 0x8d; // f2d
     pub const DCONST0:u8 = 0x0e; // dconst_0
     pub const DCONST1:u8 = 0x0f; // dconst_1
@@ -1731,16 +1732,16 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     *frame.locals.get_mut(index).ok_or("invalid fstore local index")? = value;
                     pc += size;
                 },
-                opcodes::F2I | opcodes::F2D => {
+                opcodes::F2I | opcodes::F2L | opcodes::F2D => {
                     let value = match frame.pop_value_force()? {
                         RuntimeValue::Float(value) => value,
                         _ => return Err("float conversion requires a float".to_string()),
                     };
-                    let converted = if code[pc] == opcodes::F2I {
-                        // Truncate toward zero, saturate overflow, and map NaN to zero.
-                        RuntimeValue::Int(value as i32 as i64)
-                    } else {
-                        RuntimeValue::Double(value as f64)
+                    let converted = match code[pc] {
+                        // Integer casts truncate, saturate overflow, and map NaN to zero.
+                        opcodes::F2I => RuntimeValue::Int(value as i32 as i64),
+                        opcodes::F2L => RuntimeValue::Long(value as i64),
+                        _ => RuntimeValue::Double(value as f64),
                     };
                     frame.push_value(converted);
                     pc += 1;
