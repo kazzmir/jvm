@@ -7,6 +7,7 @@ use crate::debug;
 use super::data::*;
 
 mod dynamic;
+mod arrays;
 
 #[cfg(test)]
 mod tests;
@@ -119,6 +120,9 @@ pub mod opcodes {
     pub const AASTORE:u8 = 0x53; // aastore
     pub const ANEWARRAY:u8 = 0xbd; // anewarray
     pub const NEWARRAY:u8 = 0xbc; // newarray
+    pub const MULTIANEWARRAY:u8 = 0xc5; // multianewarray
+    pub const IALOAD:u8 = 0x2e; // iaload
+    pub const IASTORE:u8 = 0x4f; // iastore
     pub const ARRAYLENGTH:u8 = 0xbe; // arraylength
     pub const PUSHBYTE:u8 = 0x10; // bipush
     pub const SIPUSH:u8 = 0x11; // sipush
@@ -187,13 +191,14 @@ mod array_types {
     pub const BOOLEAN: u8 = 4;
     pub const CHAR: u8 = 5;
     pub const FLOAT: u8 = 6;
+    pub const INT: u8 = 10;
     pub const SHORT: u8 = 9;
     pub const LONG: u8 = 11;
     pub const DOUBLE: u8 = 7;
     pub const BYTE: u8 = 8;
 
     pub fn is_supported(atype: u8) -> bool {
-        matches!(atype, BOOLEAN | CHAR | FLOAT | DOUBLE | BYTE | SHORT | LONG)
+        matches!(atype, BOOLEAN | CHAR | FLOAT | DOUBLE | BYTE | SHORT | LONG | INT)
     }
 }
 
@@ -209,6 +214,7 @@ pub enum RuntimeValue{
     FloatArray(rc::Rc<cell::RefCell<Vec<f32>>>),
     LongArray(rc::Rc<cell::RefCell<Vec<i64>>>),
     ShortArray(rc::Rc<cell::RefCell<Vec<i16>>>),
+    IntArray(rc::Rc<cell::RefCell<Vec<i32>>>),
     ByteArray(rc::Rc<cell::RefCell<JVMByteArray>>),
     ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
     Null,
@@ -260,6 +266,9 @@ impl fmt::Debug for RuntimeValue {
             },
             RuntimeValue::DoubleArray(values) => {
                 write!(f, "DoubleArray({:?})", values.borrow())
+            },
+            RuntimeValue::IntArray(values) => {
+                write!(f, "IntArray({:?})", values.borrow())
             },
             RuntimeValue::ShortArray(values) => {
                 write!(f, "ShortArray({:?})", values.borrow())
@@ -394,6 +403,7 @@ fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) 
         RuntimeValue::FloatArray(_) => target == "[F" || array_supertype(target),
         RuntimeValue::LongArray(_) => target == "[J" || array_supertype(target),
         RuntimeValue::ShortArray(_) => target == "[S" || array_supertype(target),
+        RuntimeValue::IntArray(_) => target == "[I" || array_supertype(target),
         RuntimeValue::ByteArray(array) => {
             target == (if array.borrow().is_boolean { "[Z" } else { "[B" }) || array_supertype(target)
         },
@@ -1162,6 +1172,51 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(RuntimeValue::Null);
                     pc += 1;
                 },
+                opcodes::MULTIANEWARRAY => {
+                    let operands = code.get(pc + 1..pc + 4).ok_or("truncated multianewarray")?;
+                    let index = make_int16(operands[0], operands[1]) as usize;
+                    let descriptor = lookup_class_name(constant_pool, index)?;
+                    let dimensions = operands[2] as usize;
+                    if dimensions == 0 || dimensions > descriptor.bytes().take_while(|c| *c == b'[').count() {
+                        return Err("invalid multianewarray dimensions".to_string());
+                    }
+                    let mut counts = Vec::with_capacity(dimensions);
+                    for _ in 0..dimensions {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Int(count) if count >= 0 => counts.push(count as usize),
+                            _ => return Err("invalid array length".to_string()),
+                        }
+                    }
+                    counts.reverse();
+                    frame.push_value(arrays::allocate_multidimensional(descriptor, &counts)?);
+                    pc += 4;
+                },
+                opcodes::IALOAD | opcodes::IASTORE => {
+                    let stored = if code[pc] == opcodes::IASTORE {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Int(value) => Some(value as i32),
+                            _ => return Err("iastore requires an integer".to_string()),
+                        }
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::IntArray(values) => {
+                            let mut values = values.borrow_mut();
+                            let slot = values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = value;
+                            } else {
+                                frame.push_value(RuntimeValue::Int(*slot as i64));
+                            }
+                        },
+                        _ => return Err("int array required".to_string()),
+                    }
+                    pc += 1;
+                },
                 opcodes::ANEWARRAY => {
                     let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
                     let component_class = lookup_class_name(constant_pool, index)?.to_string();
@@ -1220,6 +1275,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
                         values.resize(count, 0.0);
                         frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    } else if atype == array_types::INT {
+                        let mut values = Vec::new();
+                        values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                        values.resize(count, 0);
+                        frame.push_value(RuntimeValue::IntArray(rc::Rc::new(cell::RefCell::new(values))));
                     } else if atype == array_types::SHORT {
                         let mut values = Vec::new();
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
@@ -1257,6 +1317,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         RuntimeValue::FloatArray(values) => values.borrow().len(),
                         RuntimeValue::LongArray(values) => values.borrow().len(),
                         RuntimeValue::ShortArray(values) => values.borrow().len(),
+                        RuntimeValue::IntArray(values) => values.borrow().len(),
                         RuntimeValue::ByteArray(array) => array.borrow().values.len(),
                         RuntimeValue::ReferenceArray(array) => array.borrow().values.len(),
                         _ => return Err("arraylength requires an array".to_string()),
@@ -1710,7 +1771,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         RuntimeValue::Object(_) | RuntimeValue::String(_)
                         | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
                         | RuntimeValue::FloatArray(_) | RuntimeValue::LongArray(_) | RuntimeValue::ByteArray(_)
-                        | RuntimeValue::ShortArray(_)
+                        | RuntimeValue::ShortArray(_) | RuntimeValue::IntArray(_)
                         | RuntimeValue::CharArray(_) => false,
                         _ => return Err("null branch requires a reference".to_string()),
                     };
@@ -1827,7 +1888,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
                         | RuntimeValue::ByteArray(_) | RuntimeValue::CharArray(_)
                         | RuntimeValue::FloatArray(_) | RuntimeValue::LongArray(_)
-                        | RuntimeValue::ShortArray(_) => return Ok(value),
+                        | RuntimeValue::ShortArray(_) | RuntimeValue::IntArray(_) => return Ok(value),
                         _ => return Err("areturn requires a reference".to_string()),
                     }
                 },
