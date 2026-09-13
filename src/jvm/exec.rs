@@ -117,6 +117,12 @@ pub mod opcodes {
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
     pub const IMUL:u8 = 0x68; // imul
+    pub const ISHL:u8 = 0x78; // ishl
+    pub const ISHR:u8 = 0x7a; // ishr
+    pub const IUSHR:u8 = 0x7c; // iushr
+    pub const IAND:u8 = 0x7e; // iand
+    pub const IOR:u8 = 0x80; // ior
+    pub const IXOR:u8 = 0x82; // ixor
     pub const IDIV:u8 = 0x6c; // idiv
     pub const IINC:u8 = 0x84; // iinc
     pub const TABLESWITCH:u8 = 0xaa; // tableswitch
@@ -851,8 +857,9 @@ fn duplicate_two_slots(frame: &mut Frame, depth: usize) -> Result<(), String> {
 }
 
 fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<RuntimeValue, String> {
-    let value1 = frame.pop_value_force()?;
+    // The right operand is on top of the JVM stack.
     let value2 = frame.pop_value_force()?;
+    let value1 = frame.pop_value_force()?;
     match value1 {
         RuntimeValue::Int(i1) => {
             match value2 {
@@ -1686,6 +1693,22 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = frame.locals[3].clone();
                     frame.push_value(value);
+                },
+                opcodes::IOR | opcodes::IAND | opcodes::IXOR
+                | opcodes::ISHL | opcodes::ISHR | opcodes::IUSHR => {
+                    // Runtime ints use i64 storage, but these operations act on 32 bits.
+                    let operation: fn(i64, i64) -> i64 = match code[pc] {
+                        opcodes::IOR => |left, right| ((left as i32) | (right as i32)) as i64,
+                        opcodes::IAND => |left, right| ((left as i32) & (right as i32)) as i64,
+                        opcodes::IXOR => |left, right| ((left as i32) ^ (right as i32)) as i64,
+                        opcodes::ISHL => |left, right| ((left as i32) << (right as u32 & 0x1f)) as i64,
+                        opcodes::ISHR => |left, right| ((left as i32) >> (right as u32 & 0x1f)) as i64,
+                        // Reinterpret the zero-filled result as a signed Java int.
+                        _ => |left, right| ((left as u32) >> (right as u32 & 0x1f)) as i32 as i64,
+                    };
+                    let value = do_iop(frame, operation)?;
+                    frame.push_value(value);
+                    pc += 1;
                 },
                 opcodes::IADD => {
                     pc += 1;
