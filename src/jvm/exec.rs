@@ -67,6 +67,8 @@ pub mod opcodes {
     pub const D2L:u8 = 0x8f; // d2l
     pub const D2F:u8 = 0x90; // d2f
     pub const ACONSTNULL:u8 = 0x01; // aconst_null
+    pub const FALOAD:u8 = 0x30; // faload
+    pub const FASTORE:u8 = 0x51; // fastore
     pub const CALOAD:u8 = 0x34; // caload
     pub const CASTORE:u8 = 0x55; // castore
     pub const BALOAD:u8 = 0x33; // baload
@@ -121,11 +123,12 @@ pub mod opcodes {
 mod array_types {
     pub const BOOLEAN: u8 = 4;
     pub const CHAR: u8 = 5;
+    pub const FLOAT: u8 = 6;
     pub const DOUBLE: u8 = 7;
     pub const BYTE: u8 = 8;
 
     pub fn is_supported(atype: u8) -> bool {
-        matches!(atype, BOOLEAN | CHAR | DOUBLE | BYTE)
+        matches!(atype, BOOLEAN | CHAR | FLOAT | DOUBLE | BYTE)
     }
 }
 
@@ -137,6 +140,7 @@ pub enum RuntimeValue{
     Double(f64),
     DoubleArray(rc::Rc<cell::RefCell<Vec<f64>>>),
     CharArray(rc::Rc<cell::RefCell<Vec<u16>>>),
+    FloatArray(rc::Rc<cell::RefCell<Vec<f32>>>),
     ByteArray(rc::Rc<cell::RefCell<JVMByteArray>>),
     ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
     Null,
@@ -188,6 +192,9 @@ impl fmt::Debug for RuntimeValue {
             },
             RuntimeValue::DoubleArray(values) => {
                 write!(f, "DoubleArray({:?})", values.borrow())
+            },
+            RuntimeValue::FloatArray(values) => {
+                write!(f, "FloatArray({:?})", values.borrow())
             },
             RuntimeValue::CharArray(values) => {
                 write!(f, "CharArray({:?})", values.borrow())
@@ -307,6 +314,7 @@ fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) 
         RuntimeValue::String(_) => target == "java/lang/String" || target == "java/lang/Object",
         RuntimeValue::DoubleArray(_) => target == "[D" || array_supertype(target),
         RuntimeValue::CharArray(_) => target == "[C" || array_supertype(target),
+        RuntimeValue::FloatArray(_) => target == "[F" || array_supertype(target),
         RuntimeValue::ByteArray(array) => {
             target == (if array.borrow().is_boolean { "[Z" } else { "[B" }) || array_supertype(target)
         },
@@ -1062,6 +1070,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
                         values.resize(count, 0.0);
                         frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    } else if atype == array_types::FLOAT {
+                        let mut values = Vec::new();
+                        values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                        values.resize(count, 0.0);
+                        frame.push_value(RuntimeValue::FloatArray(rc::Rc::new(cell::RefCell::new(values))));
                     } else if atype == array_types::CHAR {
                         let mut values = Vec::new();
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
@@ -1081,11 +1094,38 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let length = match frame.pop_value_force()? {
                         RuntimeValue::DoubleArray(values) => values.borrow().len(),
                         RuntimeValue::CharArray(values) => values.borrow().len(),
+                        RuntimeValue::FloatArray(values) => values.borrow().len(),
                         RuntimeValue::ByteArray(array) => array.borrow().values.len(),
                         RuntimeValue::ReferenceArray(array) => array.borrow().values.len(),
                         _ => return Err("arraylength requires an array".to_string()),
                     };
                     frame.push_value(RuntimeValue::Int(length as i64));
+                    pc += 1;
+                },
+                opcodes::FALOAD | opcodes::FASTORE => {
+                    let stored = if code[pc] == opcodes::FASTORE {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Float(value) => Some(value),
+                            _ => return Err("fastore requires a float".to_string()),
+                        }
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::FloatArray(values) => {
+                            let mut values = values.borrow_mut();
+                            let slot = values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = value;
+                            } else {
+                                frame.push_value(RuntimeValue::Float(*slot));
+                            }
+                        },
+                        _ => return Err("float array required".to_string()),
+                    }
                     pc += 1;
                 },
                 opcodes::CALOAD | opcodes::CASTORE => {
@@ -1390,7 +1430,8 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     match value {
                         RuntimeValue::Object(_) | RuntimeValue::String(_) | RuntimeValue::Null
                         | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
-                        | RuntimeValue::ByteArray(_) | RuntimeValue::CharArray(_) => return Ok(value),
+                        | RuntimeValue::ByteArray(_) | RuntimeValue::CharArray(_)
+                        | RuntimeValue::FloatArray(_) => return Ok(value),
                         _ => return Err("areturn requires a reference".to_string()),
                     }
                 },
