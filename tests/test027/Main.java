@@ -1,4 +1,8 @@
 public class Main {
+    public static long square(long value) {
+        return value * value; // lmul, lreturn
+    }
+
     public static void main(String... args) {
         long[] data = new long[2];
         long one = 1L; // lconst_1, lstore_2
@@ -19,6 +23,11 @@ public class Main {
         System.out.println(negative >>> shift); // lushr: zero extension
         System.out.println(one ^ two); // lxor
         System.out.println(negative); // lsub result
+
+        System.out.println(negative / two); // ldiv: truncates toward zero
+        System.out.println(square(two)); // lmul and lreturn in the helper
+        System.out.println(-two); // lneg
+        System.out.println(one | two); // lor
 
         // Long shifts use only the low six bits of the int shift distance.
         shift = 65;

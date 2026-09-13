@@ -30,6 +30,11 @@ pub mod opcodes {
     pub const LALOAD:u8 = 0x2f; // laload
     pub const LASTORE:u8 = 0x50; // lastore
     pub const LADD:u8 = 0x61; // ladd
+    pub const LMUL:u8 = 0x69; // lmul
+    pub const LDIV:u8 = 0x6d; // ldiv
+    pub const LNEG:u8 = 0x75; // lneg
+    pub const LOR:u8 = 0x81; // lor
+    pub const LRETURN:u8 = 0xad; // lreturn
     pub const LSUB:u8 = 0x65; // lsub
     pub const LREM:u8 = 0x71; // lrem
     pub const LSHL:u8 = 0x79; // lshl
@@ -1576,7 +1581,15 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(RuntimeValue::Long(shifted));
                     pc += 1;
                 },
-                opcodes::LREM => {
+                opcodes::LNEG => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Long(value) => value.wrapping_neg(),
+                        _ => return Err("lneg requires a long".to_string()),
+                    };
+                    frame.push_value(RuntimeValue::Long(value));
+                    pc += 1;
+                },
+                opcodes::LREM | opcodes::LDIV => {
                     let right = frame.pop_value_force()?;
                     let left = frame.pop_value_force()?;
                     match (left, right) {
@@ -1588,19 +1601,26 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                             ));
                         },
                         (RuntimeValue::Long(left), RuntimeValue::Long(right)) => {
-                            // MIN_VALUE % -1 is zero in Java, not an overflow panic.
-                            frame.push_value(RuntimeValue::Long(left.wrapping_rem(right)));
+                            // Java wraps MIN_VALUE / -1 and defines MIN_VALUE % -1 as zero.
+                            let value = if code[pc] == opcodes::LDIV {
+                                left.wrapping_div(right)
+                            } else {
+                                left.wrapping_rem(right)
+                            };
+                            frame.push_value(RuntimeValue::Long(value));
                         },
-                        _ => return Err("lrem requires longs".to_string()),
+                        _ => return Err("long division/remainder requires longs".to_string()),
                     }
                     pc += 1;
                 },
-                opcodes::LADD | opcodes::LSUB | opcodes::LAND | opcodes::LXOR | opcodes::LCMP => {
+                opcodes::LADD | opcodes::LSUB | opcodes::LMUL | opcodes::LAND | opcodes::LOR | opcodes::LXOR | opcodes::LCMP => {
                     let right = frame.pop_value_force()?;
                     let left = frame.pop_value_force()?;
                     let result = match (left, right) {
                         (RuntimeValue::Long(left), RuntimeValue::Long(right)) => match code[pc] {
                             opcodes::LADD => RuntimeValue::Long(left.wrapping_add(right)),
+                            opcodes::LMUL => RuntimeValue::Long(left.wrapping_mul(right)),
+                            opcodes::LOR => RuntimeValue::Long(left | right),
                             opcodes::LSUB => RuntimeValue::Long(left.wrapping_sub(right)),
                             opcodes::LXOR => RuntimeValue::Long(left ^ right),
                             opcodes::LAND => RuntimeValue::Long(left & right),
@@ -2039,6 +2059,12 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     return match frame.pop_value_force()? {
                         RuntimeValue::Float(value) => Ok(RuntimeValue::Float(value)),
                         _ => Err("freturn requires a float".to_string()),
+                    };
+                },
+                opcodes::LRETURN => {
+                    return match frame.pop_value_force()? {
+                        RuntimeValue::Long(value) => Ok(RuntimeValue::Long(value)),
+                        _ => Err("lreturn requires a long".to_string()),
                     };
                 },
                 opcodes::DRETURN => {
