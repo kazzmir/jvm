@@ -154,6 +154,8 @@ pub mod opcodes {
     pub const POP:u8 = 0x57; // pop
     pub const POP2:u8 = 0x58; // pop2
     pub const SWAP:u8 = 0x5f; // swap
+    pub const DUPX1:u8 = 0x5a; // dup_x1
+    pub const DUPX2:u8 = 0x5b; // dup_x2
     pub const DUP2X1:u8 = 0x5d; // dup2_x1
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
@@ -1055,6 +1057,14 @@ fn swap_values(frame: &mut Frame) -> Result<(), String> {
 fn pop_slots(frame: &mut Frame, slots: usize) -> Result<(), String> {
     let start = group_start(&frame.stack, frame.stack.len(), slots)?;
     frame.stack.truncate(start);
+    Ok(())
+}
+
+fn duplicate_one_slot(frame: &mut Frame, depth: usize) -> Result<(), String> {
+    let top = group_start(&frame.stack, frame.stack.len(), 1)?;
+    let insert = group_start(&frame.stack, top, depth)?;
+    let duplicate = frame.stack[top].clone();
+    frame.stack.insert(insert, duplicate);
     Ok(())
 }
 
@@ -2035,6 +2045,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 opcodes::POP | opcodes::POP2 => {
                     let slots = if code[pc] == opcodes::POP { 1 } else { 2 };
                     pop_slots(frame, slots)?;
+                    pc += 1;
+                },
+                opcodes::DUPX1 | opcodes::DUPX2 => {
+                    let depth = if code[pc] == opcodes::DUPX1 { 1 } else { 2 };
+                    duplicate_one_slot(frame, depth)?;
                     pc += 1;
                 },
                 opcodes::DUP2X1 | opcodes::DUP2X2 => {

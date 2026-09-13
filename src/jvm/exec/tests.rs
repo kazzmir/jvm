@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn dup_x_forms() {
+    use RuntimeValue::{Int as I, Long as L, Double as D, Null};
+    for (depth, stack, expected) in [
+        (1, vec![I(99), I(1), I(2)], vec![I(99), I(2), I(1), I(2)]),
+        (1, vec![I(99), Null, I(2)], vec![I(99), I(2), Null, I(2)]),
+        (2, vec![I(99), I(1), I(2), I(3)], vec![I(99), I(3), I(1), I(2), I(3)]),
+        (2, vec![I(99), L(1), I(2)], vec![I(99), I(2), L(1), I(2)]),
+        (2, vec![I(99), D(1.0), I(2)], vec![I(99), I(2), D(1.0), I(2)]),
+    ] {
+        let mut frame = Frame { stack, locals: Vec::new() };
+        duplicate_one_slot(&mut frame, depth).unwrap();
+        assert_eq!(format!("{:?}", frame.stack), format!("{:?}", expected));
+    }
+}
+
+#[test]
+fn dup_x_rejects_invalid_stacks_without_mutating_them() {
+    use RuntimeValue::{Int as I, Long as L, Double as D, Void};
+    for (depth, stack) in [
+        (1, vec![]), (1, vec![I(1)]), (2, vec![I(1), I(2)]),
+        (1, vec![L(1), I(2)]), (1, vec![I(1), D(2.0)]),
+        (2, vec![I(1), I(2), L(3)]), (2, vec![L(1), I(2), I(3)]),
+        (1, vec![I(1), Void]), (2, vec![Void, I(1), I(2)]),
+    ] {
+        let before = format!("{:?}", stack);
+        let mut frame = Frame { stack, locals: Vec::new() };
+        assert!(duplicate_one_slot(&mut frame, depth).is_err());
+        assert_eq!(format!("{:?}", frame.stack), before);
+    }
+}
+
+#[test]
 fn monitors_are_reentrant_and_identity_based() {
     let jvm = create_runtime_const();
     let lock = RuntimeValue::String(rc::Rc::new("lock".to_string()));
