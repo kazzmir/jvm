@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import os
 import subprocess
 import sys
@@ -74,6 +75,17 @@ def do_test(path):
         print(colorize("OK", 'green'))
 
 def main():
+    parser = argparse.ArgumentParser(description='Run JVM tests.')
+    parser.add_argument('test', nargs='?', help='test number to run (e.g. 007)')
+    args = parser.parse_args()
+
+    if args.test is not None:
+        path = os.path.join('tests', 'test' + args.test)
+        if not os.path.isdir(path):
+            parser.error(f'test not found: {args.test}')
+        do_test(path)
+        return
+
     for path in sorted(os.listdir('tests')):
         full = os.path.join('tests', path)
         if os.path.isdir(full):
