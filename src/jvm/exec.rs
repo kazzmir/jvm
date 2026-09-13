@@ -13,6 +13,26 @@ mod tests;
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 pub mod opcodes {
+    pub const LCONST0:u8 = 0x09; // lconst_0
+    pub const LCONST1:u8 = 0x0a; // lconst_1
+    pub const LLOAD:u8 = 0x16; // lload
+    pub const LLOAD0:u8 = 0x1e; // lload_0
+    pub const LLOAD1:u8 = 0x1f; // lload_1
+    pub const LLOAD2:u8 = 0x20; // lload_2
+    pub const LLOAD3:u8 = 0x21; // lload_3
+    pub const LSTORE:u8 = 0x37; // lstore
+    pub const LSTORE0:u8 = 0x3f; // lstore_0
+    pub const LSTORE1:u8 = 0x40; // lstore_1
+    pub const LSTORE2:u8 = 0x41; // lstore_2
+    pub const LSTORE3:u8 = 0x42; // lstore_3
+    pub const LALOAD:u8 = 0x2f; // laload
+    pub const LASTORE:u8 = 0x50; // lastore
+    pub const LADD:u8 = 0x61; // ladd
+    pub const LAND:u8 = 0x7f; // land
+    pub const L2I:u8 = 0x88; // l2i
+    pub const L2F:u8 = 0x89; // l2f
+    pub const L2D:u8 = 0x8a; // l2d
+    pub const LCMP:u8 = 0x94; // lcmp
     pub const ICONSTM1:u8 = 0x02; // iconst_m1
     pub const ICONST0:u8 = 0x3; // iconst_0
     pub const ICONST1:u8 = 0x4; // iconst_1
@@ -152,11 +172,12 @@ mod array_types {
     pub const BOOLEAN: u8 = 4;
     pub const CHAR: u8 = 5;
     pub const FLOAT: u8 = 6;
+    pub const LONG: u8 = 11;
     pub const DOUBLE: u8 = 7;
     pub const BYTE: u8 = 8;
 
     pub fn is_supported(atype: u8) -> bool {
-        matches!(atype, BOOLEAN | CHAR | FLOAT | DOUBLE | BYTE)
+        matches!(atype, BOOLEAN | CHAR | FLOAT | DOUBLE | BYTE | LONG)
     }
 }
 
@@ -170,6 +191,7 @@ pub enum RuntimeValue{
     DoubleArray(rc::Rc<cell::RefCell<Vec<f64>>>),
     CharArray(rc::Rc<cell::RefCell<Vec<u16>>>),
     FloatArray(rc::Rc<cell::RefCell<Vec<f32>>>),
+    LongArray(rc::Rc<cell::RefCell<Vec<i64>>>),
     ByteArray(rc::Rc<cell::RefCell<JVMByteArray>>),
     ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
     Null,
@@ -221,6 +243,9 @@ impl fmt::Debug for RuntimeValue {
             },
             RuntimeValue::DoubleArray(values) => {
                 write!(f, "DoubleArray({:?})", values.borrow())
+            },
+            RuntimeValue::LongArray(values) => {
+                write!(f, "LongArray({:?})", values.borrow())
             },
             RuntimeValue::FloatArray(values) => {
                 write!(f, "FloatArray({:?})", values.borrow())
@@ -347,6 +372,7 @@ fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) 
         RuntimeValue::DoubleArray(_) => target == "[D" || array_supertype(target),
         RuntimeValue::CharArray(_) => target == "[C" || array_supertype(target),
         RuntimeValue::FloatArray(_) => target == "[F" || array_supertype(target),
+        RuntimeValue::LongArray(_) => target == "[J" || array_supertype(target),
         RuntimeValue::ByteArray(array) => {
             target == (if array.borrow().is_boolean { "[Z" } else { "[B" }) || array_supertype(target)
         },
@@ -1103,6 +1129,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
                         values.resize(count, 0.0);
                         frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    } else if atype == array_types::LONG {
+                        let mut values = Vec::new();
+                        values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                        values.resize(count, 0);
+                        frame.push_value(RuntimeValue::LongArray(rc::Rc::new(cell::RefCell::new(values))));
                     } else if atype == array_types::FLOAT {
                         let mut values = Vec::new();
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
@@ -1128,11 +1159,101 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         RuntimeValue::DoubleArray(values) => values.borrow().len(),
                         RuntimeValue::CharArray(values) => values.borrow().len(),
                         RuntimeValue::FloatArray(values) => values.borrow().len(),
+                        RuntimeValue::LongArray(values) => values.borrow().len(),
                         RuntimeValue::ByteArray(array) => array.borrow().values.len(),
                         RuntimeValue::ReferenceArray(array) => array.borrow().values.len(),
                         _ => return Err("arraylength requires an array".to_string()),
                     };
                     frame.push_value(RuntimeValue::Int(length as i64));
+                    pc += 1;
+                },
+                opcodes::LALOAD | opcodes::LASTORE => {
+                    let stored = if code[pc] == opcodes::LASTORE {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Long(value) => Some(value),
+                            _ => return Err("lastore requires a long".to_string()),
+                        }
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::LongArray(values) => {
+                            let mut values = values.borrow_mut();
+                            let slot = values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = value;
+                            } else {
+                                frame.push_value(RuntimeValue::Long(*slot));
+                            }
+                        },
+                        _ => return Err("long array required".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::LCONST0 | opcodes::LCONST1 => {
+                    frame.push_value(RuntimeValue::Long((code[pc] - opcodes::LCONST0) as i64));
+                    pc += 1;
+                },
+                opcodes::LLOAD | opcodes::LLOAD0..=opcodes::LLOAD3 => {
+                    let (index, size) = if code[pc] == opcodes::LLOAD {
+                        (*code.get(pc + 1).ok_or("truncated lload")? as usize, 2)
+                    } else { ((code[pc] - opcodes::LLOAD0) as usize, 1) };
+                    if index + 1 >= frame.locals.len() {
+                        return Err("invalid lload local index".to_string());
+                    }
+                    match frame.locals.get(index) {
+                        Some(RuntimeValue::Long(value)) => frame.push_value(RuntimeValue::Long(*value)),
+                        _ => return Err("lload requires a long local".to_string()),
+                    }
+                    pc += size;
+                },
+                opcodes::LSTORE | opcodes::LSTORE0..=opcodes::LSTORE3 => {
+                    let (index, size) = if code[pc] == opcodes::LSTORE {
+                        (*code.get(pc + 1).ok_or("truncated lstore")? as usize, 2)
+                    } else { ((code[pc] - opcodes::LSTORE0) as usize, 1) };
+                    if index + 1 >= frame.locals.len() {
+                        return Err("invalid lstore local index".to_string());
+                    }
+                    let value = frame.pop_value_force()?;
+                    if !matches!(value, RuntimeValue::Long(_)) {
+                        return Err("lstore requires a long".to_string());
+                    }
+                    frame.locals[index] = value;
+                    frame.locals[index + 1] = RuntimeValue::Void;
+                    pc += size;
+                },
+                opcodes::L2D | opcodes::L2F | opcodes::L2I => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Long(value) => value,
+                        _ => return Err("long conversion requires a long".to_string()),
+                    };
+                    let converted = match code[pc] {
+                        opcodes::L2D => RuntimeValue::Double(value as f64),
+                        opcodes::L2F => RuntimeValue::Float(value as f32),
+                        _ => RuntimeValue::Int(value as i32 as i64),
+                    };
+                    frame.push_value(converted);
+                    pc += 1;
+                },
+                opcodes::LADD | opcodes::LAND | opcodes::LCMP => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    let result = match (left, right) {
+                        (RuntimeValue::Long(left), RuntimeValue::Long(right)) => match code[pc] {
+                            opcodes::LADD => RuntimeValue::Long(left.wrapping_add(right)),
+                            opcodes::LAND => RuntimeValue::Long(left & right),
+                            _ => RuntimeValue::Int(match left.cmp(&right) {
+                                std::cmp::Ordering::Less => -1,
+                                std::cmp::Ordering::Equal => 0,
+                                std::cmp::Ordering::Greater => 1,
+                            }),
+                        },
+                        _ => return Err("long operation requires longs".to_string()),
+                    };
+                    frame.push_value(result);
                     pc += 1;
                 },
                 opcodes::FALOAD | opcodes::FASTORE => {
@@ -1427,7 +1548,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         RuntimeValue::Null => true,
                         RuntimeValue::Object(_) | RuntimeValue::String(_)
                         | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
-                        | RuntimeValue::FloatArray(_) | RuntimeValue::ByteArray(_)
+                        | RuntimeValue::FloatArray(_) | RuntimeValue::LongArray(_) | RuntimeValue::ByteArray(_)
                         | RuntimeValue::CharArray(_) => false,
                         _ => return Err("null branch requires a reference".to_string()),
                     };
@@ -1537,7 +1658,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         RuntimeValue::Object(_) | RuntimeValue::String(_) | RuntimeValue::Null
                         | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
                         | RuntimeValue::ByteArray(_) | RuntimeValue::CharArray(_)
-                        | RuntimeValue::FloatArray(_) => return Ok(value),
+                        | RuntimeValue::FloatArray(_) | RuntimeValue::LongArray(_) => return Ok(value),
                         _ => return Err("areturn requires a reference".to_string()),
                     }
                 },
