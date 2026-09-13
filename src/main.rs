@@ -2,7 +2,6 @@ use std::env;
 
 mod jvm;
 
-use jvm::data::*;
 use jvm::exec::*;
 
 mod debug;
@@ -18,19 +17,8 @@ fn main() {
     */
     // print just the first argument out, but only if there is at least one argument
     if args.len() > 1 {
-        match parse_class_file(args[1].as_str()) {
-            Ok(class_file) => {
-                match execute_method(&class_file, "main") {
-                    Ok(_) => {
-                    },
-                    Err(err) => {
-                        println!("Error: {0}", err);
-                    }
-                }
-            },
-            Err(err) => {
-                println!("Error: {0}", err);
-            }
+        if let Err(err) = execute_class_file(&args[1], "main") {
+            println!("Error: {0}", err);
         }
     }
 }

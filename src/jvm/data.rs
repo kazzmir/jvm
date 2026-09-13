@@ -99,7 +99,7 @@ pub struct JVMClassFile {
     pub constant_pool: ConstantPool,
     access_flags: u16,
     pub this_class: u16,
-    super_class: u16,
+    pub super_class: u16,
     interfaces: Vec<u16>,
     fields: Vec<FieldInfo>,
     pub methods: Vec<MethodInfo>,
@@ -132,10 +132,10 @@ const CONSTANT_FIELDREF:u8 = 9;
 const CONSTANT_STRING:u8 = 8;
 
 pub struct ExceptionTableEntry {
-    start_pc: u16,
-    end_pc: u16,
-    handler_pc: u16,
-    catch_type: u16,
+    pub start_pc: u16,
+    pub end_pc: u16,
+    pub handler_pc: u16,
+    pub catch_type: u16,
 }
 
 pub struct LineNumberTableEntry {
@@ -149,6 +149,7 @@ pub struct StackMapFrameEntry{
 }
 
 pub enum AttributeKind {
+    Ignored,
     Code{
         max_stack: u16,
         max_locals: u16,
@@ -354,10 +355,10 @@ fn read_attribute(file: &mut dyn std::io::Read, constant_pool: &ConstantPool) ->
                 entries: entries,
             });
         },
-        Some(something) => {
-            // result.bytes().collect::<Vec<_>>();
-            result.bytes().for_each(drop);
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("unknown attribute '{}'", something)));
+        Some(_) => {
+            // Unrecognized metadata does not affect bytecode execution.
+            std::io::copy(&mut result, &mut std::io::sink())?;
+            return Ok(AttributeKind::Ignored);
         },
         _ => {
             return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("unhandled name index {}", name_index)));

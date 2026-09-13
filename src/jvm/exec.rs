@@ -47,6 +47,7 @@ pub mod opcodes {
     pub const INVOKESPECIAL:u8 = 0xb7; // invokespecial
     pub const INVOKESTATIC:u8 = 0xb8; // invokestatic
     pub const NEW:u8 = 0xbb; // new
+    pub const ATHROW:u8 = 0xbf; // athrow
 }
 
 #[derive(Clone)]
@@ -106,7 +107,7 @@ impl fmt::Debug for RuntimeValue {
 
 enum JVMMethod<'a>{
     Native(fn(&[RuntimeValue]) -> RuntimeValue),
-    Bytecode(&'a MethodInfo),
+    Bytecode(&'a MethodInfo, &'a ConstantPool),
 }
 
 fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
@@ -118,11 +119,14 @@ fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
 
                     for method in jvmclass.methods.iter() {
                         let method_name = lookup_method_name(&jvmclass.constant_pool, method.name_index as usize)?;
-                        methods.insert(method_name.to_string(), JVMMethod::Bytecode(method));
+                        methods.insert(method_name.to_string(), JVMMethod::Bytecode(method, &jvmclass.constant_pool));
                     }
 
                     return Ok(JVMClass{
                         class: class_name.to_string(),
+                        super_class: if jvmclass.super_class == 0 { None } else {
+                            Some(lookup_class_name(&jvmclass.constant_pool, jvmclass.super_class as usize)?.to_string())
+                        },
                         methods: methods,
                         fields: HashMap::new(),
                     })
@@ -141,6 +145,7 @@ fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
 
 struct JVMClass<'a>{
     class: String,
+    super_class: Option<String>,
     methods: HashMap<String, JVMMethod<'a>>,
     fields: HashMap<String, RuntimeValue>,
 }
@@ -175,6 +180,25 @@ struct Frame {
 
 struct RuntimeConst<'a> {
     classes: HashMap<String, JVMClass<'a>>,
+    pending_exception: cell::RefCell<Option<RuntimeValue>>,
+}
+
+fn lookup_class_name(pool: &ConstantPool, index: usize) -> Result<&str, String> {
+    if let Some(ConstantPoolEntry::Classref(name)) = constant_pool_lookup(pool, index) {
+        if let Some(name) = lookup_utf8_constant(pool, *name as usize) {
+            return Ok(name);
+        }
+    }
+    Err(format!("invalid class reference {}", index))
+}
+
+fn is_instance_of(jvm: &RuntimeConst, class_name: &str, target: &str) -> bool {
+    let mut current = Some(class_name);
+    while let Some(name) = current {
+        if name == target { return true; }
+        current = jvm.lookup_class(name).and_then(|class| class.super_class.as_deref());
+    }
+    false
 }
 
 impl <'a, 'b: 'a>RuntimeConst<'a> {
@@ -244,7 +268,7 @@ fn invoke_static(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeC
                                                                         debug!("invoke native method");
                                                                         return Ok(f(locals.as_slice()));
                                                                     },
-                                                                    JVMMethod::Bytecode(info) => {
+                                                                    JVMMethod::Bytecode(info, constant_pool) => {
                                                                         debug!("invoke bytecode method stack size {}", frame.stack.len());
 
                                                                         if let Some(AttributeKind::Code { max_stack: _, max_locals, code: _, exception_table: _, attributes: _ }) = lookup_code_attribute(info) {
@@ -341,9 +365,10 @@ fn invoke_special(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                                 f(&locals.as_slice());
                                                                                 return Ok(());
                                                                             },
-                                                                            JVMMethod::Bytecode(info) => {
+                                                                            JVMMethod::Bytecode(info, constant_pool) => {
                                                                                 debug!("invoke bytecode method '{}'", name);
                                                                                 let mut new_frame = create_frame(info)?;
+                                                                                locals.resize(new_frame.locals.len(), RuntimeValue::Void);
                                                                                 new_frame.locals = locals;
                                                                                 do_execute_method(&info, constant_pool, &mut new_frame, jvm)?;
                                                                                 return Ok(());
@@ -442,7 +467,7 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
                                                                                 debug!("invoke native method");
                                                                                 return Ok(f(&locals.as_slice()));
                                                                             },
-                                                                            JVMMethod::Bytecode(info) => {
+                                                                            JVMMethod::Bytecode(info, constant_pool) => {
                                                                                 debug!("invoke bytecode method '{}'", name);
                                                                                 let mut new_frame = create_frame(info)?;
 
@@ -802,7 +827,15 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
         let mut pc = 0;
         while pc < code.len() {
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
+            let instruction_pc = pc;
             match code[pc] {
+                opcodes::ATHROW => {
+                    let exception = frame.pop_value_force()?;
+                    if !matches!(exception, RuntimeValue::Object(_)) {
+                        return Err("athrow requires an object".to_string());
+                    }
+                    *jvm.pending_exception.borrow_mut() = Some(exception);
+                },
                 opcodes::ICONST0 => {
                     frame.push_value(RuntimeValue::Int(0));
                     pc += 1;
@@ -1087,6 +1120,31 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     return Err(format!("Unknown opcode pc={} opcode=0x{:x}", pc, code[pc]));
                 }
             }
+
+            let exception = jvm.pending_exception.borrow_mut().take();
+            if let Some(exception) = exception {
+                let class_name = match &exception {
+                    RuntimeValue::Object(object) => object.borrow().class.clone(),
+                    _ => unreachable!(),
+                };
+                let mut handler = None;
+                for entry in exception_table {
+                    if instruction_pc >= entry.start_pc as usize && instruction_pc < entry.end_pc as usize
+                        && (entry.catch_type == 0 || is_instance_of(jvm, &class_name,
+                            lookup_class_name(constant_pool, entry.catch_type as usize)?)) {
+                        handler = Some(entry.handler_pc as usize);
+                        break;
+                    }
+                }
+                if let Some(target) = handler {
+                    frame.stack.clear();
+                    frame.push_value(exception);
+                    pc = target;
+                } else {
+                    *jvm.pending_exception.borrow_mut() = Some(exception);
+                    return Ok(RuntimeValue::Void);
+                }
+            }
         }
 
     } else {
@@ -1127,6 +1185,7 @@ fn create_java_io_print_stream<'a>() -> JVMClass<'a> {
 
     return JVMClass{
         class: "java/io/PrintStream".to_string(),
+        super_class: Some("java/lang/Object".to_string()),
         methods: methods,
         fields: fields,
     }
@@ -1141,6 +1200,7 @@ fn create_java_lang_system<'a>() -> JVMClass<'a> {
 
     return JVMClass{
         class: "java/lang/System".to_string(),
+        super_class: Some("java/lang/Object".to_string()),
         methods: methods,
         fields: fields
     };
@@ -1173,6 +1233,7 @@ fn create_java_lang_object<'a>() -> JVMClass<'a> {
 
     return JVMClass{
         class: "java/lang/Object".to_string(),
+        super_class: None,
         methods: methods,
         fields: fields,
     };
@@ -1185,12 +1246,56 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
     classes.insert("java/io/PrintStream".to_string(), create_java_io_print_stream());
     classes.insert("java/lang/Object".to_string(), create_java_lang_object());
 
+    for (name, parent) in [("java/lang/Throwable", "java/lang/Object"),
+                           ("java/lang/Exception", "java/lang/Throwable"),
+                           ("java/lang/RuntimeException", "java/lang/Exception")] {
+        let mut class = create_java_lang_object();
+        class.class = name.to_string();
+        class.super_class = Some(parent.to_string());
+        classes.insert(name.to_string(), class);
+    }
+
     return RuntimeConst{
         classes: classes,
+        pending_exception: cell::RefCell::new(None),
     }
 }
 
+pub fn execute_class_file(path: &str, name: &str) -> Result<RuntimeValue, String> {
+    let entry = parse_class_file(path).map_err(|err| err.to_string())?;
+    let entry_name = lookup_class_name(&entry.constant_pool, entry.this_class as usize)?;
+    let mut root = std::path::Path::new(path).to_path_buf();
+    for _ in entry_name.split('/') { root.pop(); }
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(entry_name.to_string());
+    let mut classes = vec![entry];
+    let mut index = 0;
+    while index < classes.len() {
+        let mut dependencies = Vec::new();
+        for constant in &classes[index].constant_pool {
+            if let ConstantPoolEntry::Classref(name_index) = constant {
+                if let Some(name) = lookup_utf8_constant(&classes[index].constant_pool, *name_index as usize) {
+                    if seen.insert(name.to_string()) {
+                        let file = root.join(format!("{}.class", name));
+                        if file.is_file() { dependencies.push(file); }
+                    }
+                }
+            }
+        }
+        for file in dependencies {
+            classes.push(parse_class_file(file.to_str().ok_or("invalid class path")?)
+                .map_err(|err| err.to_string())?);
+        }
+        index += 1;
+    }
+    execute_method_with_classes(&classes[0], name, &classes[1..])
+}
+
 pub fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<RuntimeValue, String> {
+    execute_method_with_classes(jvm, name, &[])
+}
+
+pub fn execute_method_with_classes(jvm: &JVMClassFile, name: &str, classes: &[JVMClassFile]) -> Result<RuntimeValue, String> {
     // find method named 'name'
     // start executing byte code at that method
 
@@ -1214,8 +1319,15 @@ pub fn execute_method(jvm: &JVMClassFile, name: &str) -> Result<RuntimeValue, St
 
                     let mut runtime = create_runtime_const();
                     runtime.add_class(create_jvm_class(jvm)?);
+                    for class in classes {
+                        runtime.add_class(create_jvm_class(class)?);
+                    }
 
-                    return do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &runtime);
+                    let result = do_execute_method(&jvm.methods[i], &jvm.constant_pool, &mut frame, &runtime)?;
+                    if let Some(exception) = runtime.pending_exception.borrow_mut().take() {
+                        return Err(format!("uncaught exception: {:?}", exception));
+                    }
+                    return Ok(result);
                 }
             },
             None => {
