@@ -165,6 +165,7 @@ pub mod opcodes {
     pub const ARETURN:u8 = 0xb0; // areturn
     pub const RETURN:u8 = 0xb1; // return
     pub const GETSTATIC:u8 = 0xb2; // getstatic
+    pub const PUTSTATIC:u8 = 0xb3; // putstatic
     pub const GETFIELD:u8 = 0xb4; // getfield
     pub const PUTFIELD:u8 = 0xb5; // putfield
     pub const INVOKEVIRTUAL:u8 = 0xb6; // invokevirtual
@@ -308,7 +309,7 @@ fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
                             Some(lookup_class_name(&jvmclass.constant_pool, jvmclass.super_class as usize)?.to_string())
                         },
                         methods: methods,
-                        fields: HashMap::new(),
+                        fields: cell::RefCell::new(HashMap::new()),
                     })
                 },
                 _ => {
@@ -328,7 +329,7 @@ struct JVMClass<'a>{
     class: String,
     super_class: Option<String>,
     methods: HashMap<String, JVMMethod<'a>>,
-    fields: HashMap<String, RuntimeValue>,
+    fields: cell::RefCell<HashMap<String, RuntimeValue>>,
 }
 
 pub struct JVMObject{
@@ -757,6 +758,24 @@ fn invoke_virtual(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &Runtime
     return Err(format!("unable to find method index {}", method_index).to_string())
 }
 
+fn op_putstatic(pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, index: usize) -> Result<(), String> {
+    let (class_index, name_type) = match constant_pool_lookup(pool, index) {
+        Some(ConstantPoolEntry::Fieldref { class_index, name_and_type_index }) => (*class_index, *name_and_type_index),
+        _ => return Err("putstatic requires a field reference".to_string()),
+    };
+    let class_name = lookup_class_name(pool, class_index as usize)?;
+    let name = match constant_pool_lookup(pool, name_type as usize) {
+        Some(ConstantPoolEntry::NameAndType { name_index, .. }) => {
+            lookup_utf8_constant(pool, *name_index as usize).ok_or("invalid static field name")?
+        },
+        _ => return Err("invalid static field name and type".to_string()),
+    };
+    let class = jvm.lookup_class(class_name).ok_or("static field class not found")?;
+    let value = frame.pop_value_force()?;
+    class.fields.borrow_mut().insert(name.to_string(), value);
+    Ok(())
+}
+
 fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, field_index: usize) -> Result<(), String> {
     match constant_pool_lookup(constant_pool, field_index) {
         Some(ConstantPoolEntry::Fieldref{class_index, name_and_type_index}) => {
@@ -781,7 +800,7 @@ fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeCo
 
                                             match jvm.lookup_class(class_name) {
                                                 Some(class) => {
-                                                    match class.fields.get(name) {
+                                                    match class.fields.borrow().get(name) {
                                                         Some(value) => {
                                                             // debug!(" pushing value");
                                                             frame.push_value(value.clone());
@@ -1994,6 +2013,12 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     pc += 3;
                 },
+                opcodes::PUTSTATIC => {
+                    let operands = code.get(pc + 1..pc + 3).ok_or("truncated putstatic")?;
+                    let index = make_int16(operands[0], operands[1]) as usize;
+                    op_putstatic(constant_pool, frame, jvm, index)?;
+                    pc += 3;
+                },
                 opcodes::GETSTATIC => {
                     debug!("Get static");
                     let b1 = code[pc+1] as usize;
@@ -2114,7 +2139,7 @@ fn create_java_io_print_stream<'a>() -> JVMClass<'a> {
         class: "java/io/PrintStream".to_string(),
         super_class: Some("java/lang/Object".to_string()),
         methods: methods,
-        fields: fields,
+        fields: cell::RefCell::new(fields),
     }
 }
 
@@ -2130,7 +2155,7 @@ fn create_java_lang_system<'a>() -> JVMClass<'a> {
         class: "java/lang/System".to_string(),
         super_class: Some("java/lang/Object".to_string()),
         methods: methods,
-        fields: fields
+        fields: cell::RefCell::new(fields)
     };
 }
 
@@ -2164,7 +2189,7 @@ fn create_java_lang_object<'a>() -> JVMClass<'a> {
         class: "java/lang/Object".to_string(),
         super_class: None,
         methods: methods,
-        fields: fields,
+        fields: cell::RefCell::new(fields),
     };
 }
 
