@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn wide_integer_locals_and_wrapping_increment() {
+    let mut frame = Frame {
+        stack: vec![RuntimeValue::Int(i32::MAX as i64)],
+        locals: vec![RuntimeValue::Void; 257],
+    };
+    let store = [opcodes::WIDE, opcodes::ISTORE, 1, 0];
+    assert_eq!(execute_wide(&store, 0, &mut frame).unwrap(), 4);
+    let increment = [opcodes::WIDE, opcodes::IINC, 1, 0, 0, 1];
+    assert_eq!(execute_wide(&increment, 0, &mut frame).unwrap(), 6);
+    let load = [opcodes::WIDE, opcodes::ILOAD, 1, 0];
+    assert_eq!(execute_wide(&load, 0, &mut frame).unwrap(), 4);
+    assert!(matches!(frame.stack.as_slice(), [RuntimeValue::Int(value)] if *value == i32::MIN as i64));
+}
+
+#[test]
+fn wide_rejects_truncation_bad_indexes_and_types() {
+    for code in [
+        vec![opcodes::WIDE],
+        vec![opcodes::WIDE, opcodes::IINC, 0, 0, 0],
+        vec![opcodes::WIDE, opcodes::ILOAD, 1, 0],
+        vec![opcodes::WIDE, opcodes::ISTORE, 1, 0],
+        vec![opcodes::WIDE, opcodes::ILOAD, 0, 0],
+        vec![opcodes::WIDE, opcodes::ISTORE, 0, 0],
+        vec![opcodes::WIDE, opcodes::IINC, 0, 0, 0, 1],
+        vec![opcodes::WIDE, opcodes::NOP, 0, 0],
+    ] {
+        let mut frame = Frame {
+            stack: vec![RuntimeValue::Null],
+            locals: vec![RuntimeValue::Null],
+        };
+        assert!(execute_wide(&code, 0, &mut frame).is_err());
+    }
+}
+
+#[test]
 fn swap_category_one_values() {
     use RuntimeValue::{Int as I, Null};
     for (stack, expected) in [

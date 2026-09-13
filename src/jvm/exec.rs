@@ -158,6 +158,7 @@ pub mod opcodes {
     pub const IXOR:u8 = 0x82; // ixor
     pub const IDIV:u8 = 0x6c; // idiv
     pub const IINC:u8 = 0x84; // iinc
+    pub const WIDE:u8 = 0xc4; // wide
     pub const TABLESWITCH:u8 = 0xaa; // tableswitch
     pub const IFICOMPARELESS:u8 = 0xa1; // if_icmplt
     pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
@@ -913,6 +914,44 @@ fn group_start(stack: &[RuntimeValue], mut end: usize, mut slots: usize) -> Resu
         slots = slots.checked_sub(width).ok_or("invalid stack categories")?;
     }
     Ok(end)
+}
+
+fn execute_wide(code: &[u8], pc: usize, frame: &mut Frame) -> Result<usize, String> {
+    let operands = code.get(pc + 1..pc + 4).ok_or("truncated wide instruction")?;
+    let index = make_int16(operands[1], operands[2]) as usize;
+    match operands[0] {
+        opcodes::ILOAD => {
+            let value = match frame.locals.get(index) {
+                Some(RuntimeValue::Int(value)) => *value,
+                _ => return Err("wide iload requires an int local".to_string()),
+            };
+            frame.push_value(RuntimeValue::Int(value));
+            Ok(pc + 4)
+        },
+        opcodes::ISTORE => {
+            if index >= frame.locals.len() {
+                return Err("wide istore local index out of bounds".to_string());
+            }
+            let value = frame.pop_value_force()?;
+            if !matches!(value, RuntimeValue::Int(_)) {
+                return Err("wide istore requires an int".to_string());
+            }
+            frame.locals[index] = value;
+            Ok(pc + 4)
+        },
+        opcodes::IINC => {
+            let increment = code.get(pc + 4..pc + 6).ok_or("truncated wide iinc")?;
+            let increment = make_int16(increment[0], increment[1]) as i16 as i32;
+            match frame.locals.get_mut(index) {
+                Some(RuntimeValue::Int(value)) => {
+                    *value = (*value as i32).wrapping_add(increment) as i64;
+                },
+                _ => return Err("wide iinc requires an int local".to_string()),
+            }
+            Ok(pc + 6)
+        },
+        _ => Err(format!("unsupported wide opcode 0x{:02x}", operands[0])),
+    }
 }
 
 fn swap_values(frame: &mut Frame) -> Result<(), String> {
@@ -1800,6 +1839,9 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
+                },
+                opcodes::WIDE => {
+                    pc = execute_wide(code, pc, frame)?;
                 },
                 opcodes::SWAP => {
                     swap_values(frame)?;
