@@ -163,6 +163,8 @@ pub mod opcodes {
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
     pub const IMUL:u8 = 0x68; // imul
+    pub const ISUB:u8 = 0x64; // isub
+    pub const IREM:u8 = 0x70; // irem
     pub const INEG:u8 = 0x74; // ineg
     pub const ISHL:u8 = 0x78; // ishl
     pub const ISHR:u8 = 0x7a; // ishr
@@ -2333,6 +2335,32 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = do_iop(frame, |i1,i2| i1 + i2)?;
                     frame.stack.push(value);
+                },
+                opcodes::ISUB => {
+                    let value = do_iop(frame, |left, right| (left as i32).wrapping_sub(right as i32) as i64)?;
+                    frame.push_value(value);
+                    pc += 1;
+                },
+                opcodes::IREM => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    match (left, right) {
+                        (RuntimeValue::Int(left), RuntimeValue::Int(right)) => {
+                            let (left, right) = (left as i32, right as i32);
+                            if right == 0 {
+                                let class = jvm.lookup_class("java/lang/ArithmeticException")
+                                    .ok_or("ArithmeticException class not found")?;
+                                *jvm.pending_exception.borrow_mut() = Some(RuntimeValue::Object(
+                                    rc::Rc::new(cell::RefCell::new(class.create_object()))
+                                ));
+                            } else {
+                                // Java defines MIN_VALUE % -1 as zero.
+                                frame.push_value(RuntimeValue::Int(left.wrapping_rem(right) as i64));
+                            }
+                        },
+                        _ => return Err("irem requires integers".to_string()),
+                    }
+                    pc += 1;
                 },
                 opcodes::IMUL => {
                     pc += 1;

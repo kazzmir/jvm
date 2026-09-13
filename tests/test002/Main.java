@@ -12,6 +12,8 @@ public class Main{
         System.out.println(x + 2);
         System.out.println(x * 2);
         System.out.println(x / 2); // idiv
+        System.out.println(x % 3); // irem
+        System.out.println(x - 3); // isub
         System.out.println(-x); // ineg
         System.out.println(bar(4));
         System.out.println(bar2(3, 4, 5));
