@@ -134,6 +134,7 @@ pub mod opcodes {
     pub const ILOAD1:u8 = 0x1b; // iload_1
     pub const ILOAD2:u8 = 0x1c; // iload_2
     pub const ILOAD3:u8 = 0x1d; // iload_3
+    pub const ALOAD:u8 = 0x19; // aload
     pub const ALOAD0:u8 = 0x2a; // aload_0
     pub const ALOAD1:u8 = 0x2b; // aload_1
     pub const ALOAD2:u8 = 0x2c; // aload_2
@@ -143,6 +144,7 @@ pub mod opcodes {
     pub const ISTORE1:u8 = 0x3c; // istore_1
     pub const ISTORE2:u8 = 0x3d; // istore_2
     pub const ISTORE3:u8 = 0x3e; // istore_3
+    pub const ASTORE:u8 = 0x3a; // astore
     pub const ASTORE0:u8 = 0x4b; // astore_0
     pub const ASTORE1:u8 = 0x4c; // astore_1
     pub const ASTORE2:u8 = 0x4d; // astore_2
@@ -2046,6 +2048,19 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(value.clone());
                     frame.push_value(value);
                 },
+                opcodes::ASTORE => {
+                    let index = *code.get(pc + 1).ok_or("truncated astore")? as usize;
+                    if index >= frame.locals.len() {
+                        return Err("invalid astore local index".to_string());
+                    }
+                    let value = frame.pop_value_force()?;
+                    // astore accepts references and legacy jsr return addresses.
+                    if !matches!(value, RuntimeValue::ReturnAddress(_)) {
+                        references_equal(&value, &value)?;
+                    }
+                    frame.locals[index] = value;
+                    pc += 2;
+                },
                 opcodes::ASTORE0 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
@@ -2091,6 +2106,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = frame.pop_value_force()?;
                     frame.locals[3] = value;
+                },
+                opcodes::ALOAD => {
+                    let index = *code.get(pc + 1).ok_or("truncated aload")? as usize;
+                    let value = frame.locals.get(index).ok_or("invalid aload local index")?.clone();
+                    // Unlike astore, aload cannot load a returnAddress value.
+                    references_equal(&value, &value)?;
+                    frame.push_value(value);
+                    pc += 2;
                 },
                 opcodes::ALOAD0 => {
                     pc += 1;
