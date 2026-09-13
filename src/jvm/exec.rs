@@ -64,7 +64,12 @@ pub mod opcodes {
     pub const DCMPG:u8 = 0x98; // dcmpg
     pub const IFGE:u8 = 0x9c; // ifge
     pub const IFLE:u8 = 0x9e; // ifle
+    pub const I2L:u8 = 0x85; // i2l
+    pub const I2F:u8 = 0x86; // i2f
     pub const I2D:u8 = 0x87; // i2d
+    pub const I2B:u8 = 0x91; // i2b
+    pub const I2C:u8 = 0x92; // i2c
+    pub const I2S:u8 = 0x93; // i2s
     pub const D2I:u8 = 0x8e; // d2i
     pub const D2L:u8 = 0x8f; // d2l
     pub const D2F:u8 = 0x90; // d2f
@@ -1318,11 +1323,20 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(converted);
                     pc += 1;
                 },
-                opcodes::I2D => {
-                    match frame.pop_value_force()? {
-                        RuntimeValue::Int(value) => frame.push_value(RuntimeValue::Double(value as f64)),
-                        _ => return Err("i2d requires an integer".to_string()),
-                    }
+                opcodes::I2B | opcodes::I2C | opcodes::I2D | opcodes::I2F | opcodes::I2L | opcodes::I2S => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Int(value) => value as i32,
+                        _ => return Err("integer conversion requires an integer".to_string()),
+                    };
+                    let converted = match code[pc] {
+                        opcodes::I2B => RuntimeValue::Int(value as i8 as i64),
+                        opcodes::I2C => RuntimeValue::Int(value as u16 as i64),
+                        opcodes::I2D => RuntimeValue::Double(value as f64),
+                        opcodes::I2F => RuntimeValue::Float(value as f32),
+                        opcodes::I2L => RuntimeValue::Long(value as i64),
+                        _ => RuntimeValue::Int(value as i16 as i64),
+                    };
+                    frame.push_value(converted);
                     pc += 1;
                 },
                 opcodes::DADD | opcodes::DSUB | opcodes::DMUL | opcodes::DDIV | opcodes::DREM => {
