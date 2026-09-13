@@ -14,6 +14,20 @@ pub mod opcodes {
     pub const ICONST3:u8 = 0x6; // iconst_3
     pub const ICONST4:u8 = 0x7; // iconst_4
     pub const ICONST5:u8 = 0x8; // iconst_5
+    pub const DCONST0:u8 = 0x0e; // dconst_0
+    pub const DCONST1:u8 = 0x0f; // dconst_1
+    pub const DLOAD:u8 = 0x18; // dload
+    pub const DLOAD0:u8 = 0x26; // dload_0
+    pub const DLOAD3:u8 = 0x29; // dload_3
+    pub const DALOAD:u8 = 0x31; // daload
+    pub const DSTORE:u8 = 0x39; // dstore
+    pub const DSTORE0:u8 = 0x47; // dstore_0
+    pub const DSTORE3:u8 = 0x4a; // dstore_3
+    pub const DASTORE:u8 = 0x52; // dastore
+    pub const DADD:u8 = 0x63; // dadd
+    pub const I2D:u8 = 0x87; // i2d
+    pub const NEWARRAY:u8 = 0xbc; // newarray
+    pub const ARRAYLENGTH:u8 = 0xbe; // arraylength
     pub const PUSHBYTE:u8 = 0x10; // bipush
     pub const PUSHRUNTIMECONSTANT:u8 = 0x12; // ldc
     pub const ILOAD:u8 = 0x15; // iload
@@ -56,6 +70,7 @@ pub enum RuntimeValue{
     Long(i64),
     Float(f32),
     Double(f64),
+    DoubleArray(rc::Rc<cell::RefCell<Vec<f64>>>),
     Void,
     String(String),
     Object(rc::Rc<cell::RefCell<JVMObject>>),
@@ -91,6 +106,9 @@ impl fmt::Debug for RuntimeValue {
             },
             RuntimeValue::Double(value) => {
                 write!(f, "Double({})", value)
+            },
+            RuntimeValue::DoubleArray(values) => {
+                write!(f, "DoubleArray({:?})", values.borrow())
             },
             RuntimeValue::Void => {
                 write!(f, "Void")
@@ -829,6 +847,99 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
             let instruction_pc = pc;
             match code[pc] {
+                opcodes::NEWARRAY => {
+                    if code[pc + 1] != 7 {
+                        return Err(format!("unsupported newarray type {}", code[pc + 1]));
+                    }
+                    let count = match frame.pop_value_force()? {
+                        RuntimeValue::Int(count) if count >= 0 => count as usize,
+                        _ => return Err("invalid array length".to_string()),
+                    };
+                    let mut values = Vec::new();
+                    values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                    values.resize(count, 0.0);
+                    frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    pc += 2;
+                },
+                opcodes::ARRAYLENGTH => {
+                    let length = match frame.pop_value_force()? {
+                        RuntimeValue::DoubleArray(values) => values.borrow().len(),
+                        _ => return Err("arraylength requires an array".to_string()),
+                    };
+                    frame.push_value(RuntimeValue::Int(length as i64));
+                    pc += 1;
+                },
+                opcodes::DALOAD | opcodes::DASTORE => {
+                    let stored = if code[pc] == opcodes::DASTORE {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Double(value) => Some(value),
+                            _ => return Err("dastore requires a double".to_string()),
+                        }
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::DoubleArray(values) => {
+                            let mut values = values.borrow_mut();
+                            let slot = values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = value;
+                            } else {
+                                frame.push_value(RuntimeValue::Double(*slot));
+                            }
+                        },
+                        _ => return Err("double array required".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::DCONST0 | opcodes::DCONST1 => {
+                    frame.push_value(RuntimeValue::Double((code[pc] - opcodes::DCONST0) as f64));
+                    pc += 1;
+                },
+                opcodes::DLOAD | opcodes::DLOAD0..=opcodes::DLOAD3 => {
+                    let (index, size) = if code[pc] == opcodes::DLOAD {
+                        (code[pc + 1] as usize, 2)
+                    } else { ((code[pc] - opcodes::DLOAD0) as usize, 1) };
+                    match frame.locals.get(index) {
+                        Some(RuntimeValue::Double(value)) => frame.push_value(RuntimeValue::Double(*value)),
+                        _ => return Err("dload requires a double local".to_string()),
+                    }
+                    pc += size;
+                },
+                opcodes::DSTORE | opcodes::DSTORE0..=opcodes::DSTORE3 => {
+                    let (index, size) = if code[pc] == opcodes::DSTORE {
+                        (code[pc + 1] as usize, 2)
+                    } else { ((code[pc] - opcodes::DSTORE0) as usize, 1) };
+                    let value = frame.pop_value_force()?;
+                    if !matches!(value, RuntimeValue::Double(_)) || index + 1 >= frame.locals.len() {
+                        return Err("invalid dstore".to_string());
+                    }
+                    frame.locals[index] = value;
+                    // Doubles occupy two local slots, but one operand-stack entry.
+                    frame.locals[index + 1] = RuntimeValue::Void;
+                    pc += size;
+                },
+                opcodes::I2D => {
+                    match frame.pop_value_force()? {
+                        RuntimeValue::Int(value) => frame.push_value(RuntimeValue::Double(value as f64)),
+                        _ => return Err("i2d requires an integer".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::DADD => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    match (left, right) {
+                        (RuntimeValue::Double(left), RuntimeValue::Double(right)) => {
+                            frame.push_value(RuntimeValue::Double(left + right));
+                        },
+                        _ => return Err("dadd requires doubles".to_string()),
+                    }
+                    pc += 1;
+                },
                 opcodes::ATHROW => {
                     let exception = frame.pop_value_force()?;
                     if !matches!(exception, RuntimeValue::Object(_)) {
@@ -1171,6 +1282,13 @@ fn create_java_io_print_stream<'a>() -> JVMClass<'a> {
                 },
                 RuntimeValue::Int(i) => {
                     println!("{}", i);
+                },
+                RuntimeValue::Double(value) => {
+                    if value.is_infinite() {
+                        println!("{}Infinity", if value.is_sign_negative() { "-" } else { "" });
+                    } else {
+                        println!("{:?}", value);
+                    }
                 },
                 _ => {
                     println!("Unknown value type for println: {:?}", arg);
