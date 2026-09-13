@@ -156,6 +156,7 @@ pub mod opcodes {
     pub const SWAP:u8 = 0x5f; // swap
     pub const DUPX1:u8 = 0x5a; // dup_x1
     pub const DUPX2:u8 = 0x5b; // dup_x2
+    pub const DUP2:u8 = 0x5c; // dup2
     pub const DUP2X1:u8 = 0x5d; // dup2_x1
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
@@ -2050,6 +2051,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 opcodes::DUPX1 | opcodes::DUPX2 => {
                     let depth = if code[pc] == opcodes::DUPX1 { 1 } else { 2 };
                     duplicate_one_slot(frame, depth)?;
+                    pc += 1;
+                },
+                opcodes::DUP2 => {
+                    duplicate_two_slots(frame, 0)?;
                     pc += 1;
                 },
                 opcodes::DUP2X1 | opcodes::DUP2X2 => {

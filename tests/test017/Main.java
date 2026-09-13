@@ -7,5 +7,9 @@ public class Main {
 
         System.out.println(object.value = 1.0);
         System.out.println(data[0] = 1.0);
+
+        double copy;
+        System.out.println(copy = 1.0); // dup2 before dstore_3
+        System.out.println(copy);
     }
 }

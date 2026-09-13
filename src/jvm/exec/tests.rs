@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn dup2_forms() {
+    use RuntimeValue::{Int as I, Long as L, Double as D};
+    for (stack, expected) in [
+        (vec![I(99), I(1), I(2)], vec![I(99), I(1), I(2), I(1), I(2)]),
+        (vec![I(99), L(1)], vec![I(99), L(1), L(1)]),
+        (vec![I(99), D(1.0)], vec![I(99), D(1.0), D(1.0)]),
+    ] {
+        let mut frame = Frame { stack, locals: Vec::new() };
+        duplicate_two_slots(&mut frame, 0).unwrap();
+        assert_eq!(format!("{:?}", frame.stack), format!("{:?}", expected));
+    }
+}
+
+#[test]
+fn dup2_rejects_invalid_stacks_without_mutating_them() {
+    use RuntimeValue::{Int as I, Long as L, Void};
+    for stack in [vec![], vec![I(1)], vec![L(1), I(2)], vec![Void, I(1)]] {
+        let before = format!("{:?}", stack);
+        let mut frame = Frame { stack, locals: Vec::new() };
+        assert!(duplicate_two_slots(&mut frame, 0).is_err());
+        assert_eq!(format!("{:?}", frame.stack), before);
+    }
+}
+
+#[test]
 fn dup_x_forms() {
     use RuntimeValue::{Int as I, Long as L, Double as D, Null};
     for (depth, stack, expected) in [
