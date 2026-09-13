@@ -28,6 +28,7 @@ pub mod opcodes {
     pub const ISTORE1:u8 = 0x3c; // istore_1
     pub const ISTORE2:u8 = 0x3d; // istore_2
     pub const ISTORE3:u8 = 0x3e; // istore_3
+    pub const ASTORE0:u8 = 0x4b; // astore_0
     pub const ASTORE1:u8 = 0x4c; // astore_1
     pub const DUP:u8 = 0x59; // dup
     pub const IADD:u8 = 0x60; // iadd
@@ -845,6 +846,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.pop_value_force()?;
                     frame.push_value(value.clone());
                     frame.push_value(value);
+                },
+                opcodes::ASTORE0 => {
+                    pc += 1;
+                    let value = frame.pop_value_force()?;
+                    frame.locals[0] = value;
                 },
                 opcodes::ASTORE1 => {
                     pc += 1;
