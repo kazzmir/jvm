@@ -28,6 +28,12 @@ pub mod opcodes {
     pub const LALOAD:u8 = 0x2f; // laload
     pub const LASTORE:u8 = 0x50; // lastore
     pub const LADD:u8 = 0x61; // ladd
+    pub const LSUB:u8 = 0x65; // lsub
+    pub const LREM:u8 = 0x71; // lrem
+    pub const LSHL:u8 = 0x79; // lshl
+    pub const LSHR:u8 = 0x7b; // lshr
+    pub const LUSHR:u8 = 0x7d; // lushr
+    pub const LXOR:u8 = 0x83; // lxor
     pub const LAND:u8 = 0x7f; // land
     pub const L2I:u8 = 0x88; // l2i
     pub const L2F:u8 = 0x89; // l2f
@@ -1238,12 +1244,50 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.push_value(converted);
                     pc += 1;
                 },
-                opcodes::LADD | opcodes::LAND | opcodes::LCMP => {
+                opcodes::LSHL | opcodes::LSHR | opcodes::LUSHR => {
+                    let distance = match frame.pop_value_force()? {
+                        RuntimeValue::Int(value) => value as u32 & 0x3f,
+                        _ => return Err("long shift requires an int distance".to_string()),
+                    };
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Long(value) => value,
+                        _ => return Err("long shift requires a long value".to_string()),
+                    };
+                    let shifted = match code[pc] {
+                        opcodes::LSHL => value << distance,
+                        opcodes::LSHR => value >> distance,
+                        _ => ((value as u64) >> distance) as i64,
+                    };
+                    frame.push_value(RuntimeValue::Long(shifted));
+                    pc += 1;
+                },
+                opcodes::LREM => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    match (left, right) {
+                        (RuntimeValue::Long(_), RuntimeValue::Long(0)) => {
+                            let class = jvm.lookup_class("java/lang/ArithmeticException")
+                                .ok_or("ArithmeticException class not found")?;
+                            *jvm.pending_exception.borrow_mut() = Some(RuntimeValue::Object(
+                                rc::Rc::new(cell::RefCell::new(class.create_object()))
+                            ));
+                        },
+                        (RuntimeValue::Long(left), RuntimeValue::Long(right)) => {
+                            // MIN_VALUE % -1 is zero in Java, not an overflow panic.
+                            frame.push_value(RuntimeValue::Long(left.wrapping_rem(right)));
+                        },
+                        _ => return Err("lrem requires longs".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::LADD | opcodes::LSUB | opcodes::LAND | opcodes::LXOR | opcodes::LCMP => {
                     let right = frame.pop_value_force()?;
                     let left = frame.pop_value_force()?;
                     let result = match (left, right) {
                         (RuntimeValue::Long(left), RuntimeValue::Long(right)) => match code[pc] {
                             opcodes::LADD => RuntimeValue::Long(left.wrapping_add(right)),
+                            opcodes::LSUB => RuntimeValue::Long(left.wrapping_sub(right)),
+                            opcodes::LXOR => RuntimeValue::Long(left ^ right),
                             opcodes::LAND => RuntimeValue::Long(left & right),
                             _ => RuntimeValue::Int(match left.cmp(&right) {
                                 std::cmp::Ordering::Less => -1,
@@ -2117,7 +2161,8 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
     for (name, parent) in [("java/lang/Throwable", "java/lang/Object"),
                            ("java/lang/Exception", "java/lang/Throwable"),
                            ("java/lang/RuntimeException", "java/lang/Exception"),
-                           ("java/lang/ClassCastException", "java/lang/RuntimeException")] {
+                           ("java/lang/ClassCastException", "java/lang/RuntimeException"),
+                           ("java/lang/ArithmeticException", "java/lang/RuntimeException")] {
         let mut class = create_java_lang_object();
         class.class = name.to_string();
         class.super_class = Some(parent.to_string());
