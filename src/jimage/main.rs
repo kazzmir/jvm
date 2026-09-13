@@ -100,14 +100,7 @@ fn read_jimage_header(file:&mut std::fs::File) -> Result<JImageHeader, io::Error
     let location_size = read_u32_le(file)?;
     let strings_size = read_u32_le(file)?;
 
-    println!("version: {}.{}", major_version, minor_version);
-    println!("flags: 0x{:08x}", flags);
-    println!("resource_count: {}", resource_count);
-    println!("table_length: {}", table_length);
-    println!("location_size: {}", location_size);
-    println!("strings_size: {}", strings_size);
-
-    Ok(JImageHeader{
+    let image = JImageHeader{
         magic: magic,
         version: version,
         flags: flags,
@@ -115,7 +108,17 @@ fn read_jimage_header(file:&mut std::fs::File) -> Result<JImageHeader, io::Error
         table_length: table_length,
         location_size: location_size,
         strings_size: strings_size,
-    })
+    };
+
+    println!("version: {}.{}", major_version, minor_version);
+    println!("flags: 0x{:08x}", flags);
+    println!("resource_count: {}", resource_count);
+    println!("table_length: {}", table_length);
+    println!("location_size: {}", location_size);
+    println!("strings_size: {}", strings_size);
+    println!("index size: {}", image.get_index_size());
+
+    Ok(image)
 }
 
 fn read_value(length: u8, locations: &Vec<u8>, offset: u32) -> u64 {
@@ -222,6 +225,7 @@ fn read_offsets(header: &JImageHeader, file: &mut std::fs::File) -> Result<Vec<u
             continue
         }
         println!("Attributes: {:?}", attributes);
+        println!("Offset: {}", offset);
         if attributes.len() >= 2 {
             println!("  module name: {}", read_string(&strings, attributes[1]));
         }
@@ -231,9 +235,11 @@ fn read_offsets(header: &JImageHeader, file: &mut std::fs::File) -> Result<Vec<u
         if attributes.len() >= 4 {
             println!("  parent name: {}", read_string(&strings, attributes[3]));
         }
+
+        return Err(io::Error::new(io::ErrorKind::Other, "read offsets abort early"));
     }
 
-    return Err(io::Error::new(io::ErrorKind::Other, "Not implemented"));
+    return Err(io::Error::new(io::ErrorKind::Other, "read offsets not implemented"));
 }
 
 fn dump_jimage(filename: &str) -> Result<(), io::Error>{
