@@ -74,6 +74,7 @@ pub enum ConstantPoolEntry {
     InvokeDynamic(u16, u16),
     Classref(u16),
     Methodref(u16, u16),
+    InterfaceMethodref(u16, u16),
     NameAndType{name_index:u16, descriptor_index:u16},
     Utf8(String),
     Fieldref{class_index:u16, name_and_type_index:u16},
@@ -88,6 +89,7 @@ impl ConstantPoolEntry {
             ConstantPoolEntry::InvokeDynamic(..) => "InvokeDynamic",
             ConstantPoolEntry::Classref(_) => "Classref",
             ConstantPoolEntry::Methodref(_, _) => "Methodref",
+            ConstantPoolEntry::InterfaceMethodref(_, _) => "InterfaceMethodref",
             ConstantPoolEntry::NameAndType{..} => "NameAndType",
             ConstantPoolEntry::Utf8(_) => "Utf8",
             ConstantPoolEntry::Fieldref{..} => "Fieldref",
@@ -106,7 +108,7 @@ pub struct JVMClassFile {
     access_flags: u16,
     pub this_class: u16,
     pub super_class: u16,
-    interfaces: Vec<u16>,
+    pub interfaces: Vec<u16>,
     fields: Vec<FieldInfo>,
     pub methods: Vec<MethodInfo>,
     pub attributes: Vec<AttributeKind>,
@@ -132,6 +134,7 @@ fn read_u8(file: &mut dyn std::io::Read) -> u8 {
 
 const CONSTANT_CLASSREF:u8 = 7;
 const CONSTANT_METHODREF:u8 = 10;
+const CONSTANT_INTERFACE_METHODREF:u8 = 11;
 const CONSTANT_NAMEANDTYPE:u8 = 12;
 const CONSTANT_UTF8:u8 = 1;
 const CONSTANT_FIELDREF:u8 = 9;
@@ -474,6 +477,11 @@ pub fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> 
                         // name index
                         let name = read_u16_bigendian(&mut file);
                         jvm_class_file.constant_pool.push(ConstantPoolEntry::Classref(name));
+                    },
+                    CONSTANT_INTERFACE_METHODREF => {
+                        let class = read_u16_bigendian(&mut file);
+                        let name_and_type = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::InterfaceMethodref(class, name_and_type));
                     },
                     CONSTANT_METHODREF => {
                         // class index

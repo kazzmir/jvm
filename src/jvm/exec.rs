@@ -7,6 +7,7 @@ use crate::debug;
 use super::data::*;
 
 mod dynamic;
+mod interface;
 mod arrays;
 
 #[cfg(test)]
@@ -198,6 +199,7 @@ pub mod opcodes {
     pub const INVOKEVIRTUAL:u8 = 0xb6; // invokevirtual
     pub const INVOKESPECIAL:u8 = 0xb7; // invokespecial
     pub const INVOKESTATIC:u8 = 0xb8; // invokestatic
+    pub const INVOKEINTERFACE:u8 = 0xb9; // invokeinterface
     pub const INVOKEDYNAMIC:u8 = 0xba; // invokedynamic
     pub const NEW:u8 = 0xbb; // new
     pub const ATHROW:u8 = 0xbf; // athrow
@@ -1925,6 +1927,18 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     } else {
                         pc += 3;
                     }
+                },
+                opcodes::INVOKEINTERFACE => {
+                    let operands = code.get(pc + 1..pc + 5).ok_or("truncated invokeinterface")?;
+                    if operands[3] != 0 {
+                        return Err("invalid invokeinterface reserved byte".to_string());
+                    }
+                    let index = make_int16(operands[0], operands[1]) as usize;
+                    let value = interface::invoke(constant_pool, index, operands[2], frame, jvm)?;
+                    if !matches!(value, RuntimeValue::Void) {
+                        frame.push_value(value);
+                    }
+                    pc += 5;
                 },
                 opcodes::INVOKEDYNAMIC => {
                     let operands = code.get(pc + 1..pc + 5).ok_or("truncated invokedynamic")?;
