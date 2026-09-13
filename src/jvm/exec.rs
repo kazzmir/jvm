@@ -27,6 +27,8 @@ pub mod opcodes {
     pub const DADD:u8 = 0x63; // dadd
     pub const I2D:u8 = 0x87; // i2d
     pub const ACONSTNULL:u8 = 0x01; // aconst_null
+    pub const BALOAD:u8 = 0x33; // baload
+    pub const BASTORE:u8 = 0x54; // bastore
     pub const AALOAD:u8 = 0x32; // aaload
     pub const AASTORE:u8 = 0x53; // aastore
     pub const ANEWARRAY:u8 = 0xbd; // anewarray
@@ -68,6 +70,16 @@ pub mod opcodes {
     pub const ATHROW:u8 = 0xbf; // athrow
 }
 
+mod array_types {
+    pub const BOOLEAN: u8 = 4;
+    pub const DOUBLE: u8 = 7;
+    pub const BYTE: u8 = 8;
+
+    pub fn is_supported(atype: u8) -> bool {
+        matches!(atype, BOOLEAN | DOUBLE | BYTE)
+    }
+}
+
 #[derive(Clone)]
 pub enum RuntimeValue{
     Int(i64),
@@ -75,11 +87,17 @@ pub enum RuntimeValue{
     Float(f32),
     Double(f64),
     DoubleArray(rc::Rc<cell::RefCell<Vec<f64>>>),
+    ByteArray(rc::Rc<cell::RefCell<JVMByteArray>>),
     ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
     Null,
     Void,
     String(String),
     Object(rc::Rc<cell::RefCell<JVMObject>>),
+}
+
+pub struct JVMByteArray {
+    is_boolean: bool,
+    values: Vec<i8>,
 }
 
 pub struct JVMReferenceArray {
@@ -120,6 +138,9 @@ impl fmt::Debug for RuntimeValue {
             },
             RuntimeValue::DoubleArray(values) => {
                 write!(f, "DoubleArray({:?})", values.borrow())
+            },
+            RuntimeValue::ByteArray(array) => {
+                write!(f, "ByteArray({:?})", array.borrow().values)
             },
             RuntimeValue::ReferenceArray(array) => {
                 let array = array.borrow();
@@ -232,6 +253,9 @@ fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) 
         RuntimeValue::Object(object) => is_instance_of(jvm, &object.borrow().class, target),
         RuntimeValue::String(_) => target == "java/lang/String" || target == "java/lang/Object",
         RuntimeValue::DoubleArray(_) => target == "[D" || array_supertype(target),
+        RuntimeValue::ByteArray(array) => {
+            target == (if array.borrow().is_boolean { "[Z" } else { "[B" }) || array_supertype(target)
+        },
         RuntimeValue::ReferenceArray(array) => {
             if array_supertype(target) { return true; }
             let component = array.borrow().component_class.clone();
@@ -949,26 +973,65 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                 },
                 opcodes::NEWARRAY => {
-                    if code[pc + 1] != 7 {
-                        return Err(format!("unsupported newarray type {}", code[pc + 1]));
+                    let atype = code[pc + 1];
+                    if !array_types::is_supported(atype) {
+                        return Err(format!("unsupported newarray type {}", atype));
                     }
                     let count = match frame.pop_value_force()? {
                         RuntimeValue::Int(count) if count >= 0 => count as usize,
                         _ => return Err("invalid array length".to_string()),
                     };
-                    let mut values = Vec::new();
-                    values.try_reserve_exact(count).map_err(|err| err.to_string())?;
-                    values.resize(count, 0.0);
-                    frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    if atype == array_types::DOUBLE {
+                        let mut values = Vec::new();
+                        values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                        values.resize(count, 0.0);
+                        frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    } else {
+                        let mut values = Vec::new();
+                        values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                        values.resize(count, 0);
+                        frame.push_value(RuntimeValue::ByteArray(rc::Rc::new(cell::RefCell::new(
+                            JVMByteArray { is_boolean: atype == array_types::BOOLEAN, values }
+                        ))));
+                    }
                     pc += 2;
                 },
                 opcodes::ARRAYLENGTH => {
                     let length = match frame.pop_value_force()? {
                         RuntimeValue::DoubleArray(values) => values.borrow().len(),
+                        RuntimeValue::ByteArray(array) => array.borrow().values.len(),
                         RuntimeValue::ReferenceArray(array) => array.borrow().values.len(),
                         _ => return Err("arraylength requires an array".to_string()),
                     };
                     frame.push_value(RuntimeValue::Int(length as i64));
+                    pc += 1;
+                },
+                opcodes::BALOAD | opcodes::BASTORE => {
+                    let stored = if code[pc] == opcodes::BASTORE {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Int(value) => Some(value),
+                            _ => return Err("bastore requires an integer".to_string()),
+                        }
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::ByteArray(array) => {
+                            let mut array = array.borrow_mut();
+                            let is_boolean = array.is_boolean;
+                            let slot = array.values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = if is_boolean { (value & 1) as i8 } else { value as i8 };
+                            } else {
+                                // Sign-extend bytes; boolean elements are always 0 or 1.
+                                frame.push_value(RuntimeValue::Int(*slot as i64));
+                            }
+                        },
+                        _ => return Err("byte or boolean array required".to_string()),
+                    }
                     pc += 1;
                 },
                 opcodes::DALOAD | opcodes::DASTORE => {
@@ -1074,7 +1137,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                 },
                 opcodes::PUSHBYTE => {
-                    let value = code[pc + 1] as i64;
+                    let value = code[pc + 1] as i8 as i64;
                     frame.push_value(RuntimeValue::Int(value));
                     pc += 2;
                 },
