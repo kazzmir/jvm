@@ -1,7 +1,8 @@
 public class Main {
     public static void main(String... args) {
-        float one = 1.0f;
-        float two = one + one;
+        float zero = 0.0f; // fconst_0
+        float one = 1.0f; // fconst_1
+        float two = 2.0f; // fconst_2
 
         System.out.println((double) one); // f2d
         System.out.println((int) one); // f2i
@@ -13,5 +14,12 @@ public class Main {
         System.out.println(-two); // fneg
         System.out.println(one % two); // frem
         System.out.println(one - two); // fsub
+
+        if (two > one) { // fcmpl
+            System.out.println("greater");
+        }
+        if (zero < one) { // fcmpg
+            System.out.println("less");
+        }
     }
 }

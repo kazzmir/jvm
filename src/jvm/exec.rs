@@ -58,6 +58,8 @@ pub mod opcodes {
     pub const DDIV:u8 = 0x6f; // ddiv
     pub const DREM:u8 = 0x73; // drem
     pub const DNEG:u8 = 0x77; // dneg
+    pub const FCMPL:u8 = 0x95; // fcmpl
+    pub const FCMPG:u8 = 0x96; // fcmpg
     pub const DCMPL:u8 = 0x97; // dcmpl
     pub const DCMPG:u8 = 0x98; // dcmpg
     pub const IFGE:u8 = 0x9c; // ifge
@@ -1343,6 +1345,23 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     match frame.pop_value_force()? {
                         RuntimeValue::Double(value) => frame.push_value(RuntimeValue::Double(-value)),
                         _ => return Err("dneg requires a double".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::FCMPL | opcodes::FCMPG => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    match (left, right) {
+                        (RuntimeValue::Float(left), RuntimeValue::Float(right)) => {
+                            let result = match left.partial_cmp(&right) {
+                                Some(std::cmp::Ordering::Less) => -1,
+                                Some(std::cmp::Ordering::Equal) => 0,
+                                Some(std::cmp::Ordering::Greater) => 1,
+                                None => if code[pc] == opcodes::FCMPL { -1 } else { 1 },
+                            };
+                            frame.push_value(RuntimeValue::Int(result));
+                        },
+                        _ => return Err("float comparison requires floats".to_string()),
                     }
                     pc += 1;
                 },
