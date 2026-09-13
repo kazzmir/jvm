@@ -59,6 +59,7 @@ pub mod opcodes {
     pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
     pub const GOTO:u8 = 0xa7; // goto
     pub const IRETURN:u8 = 0xac; // ireturn
+    pub const ARETURN:u8 = 0xb0; // areturn
     pub const RETURN:u8 = 0xb1; // return
     pub const GETSTATIC:u8 = 0xb2; // getstatic
     pub const GETFIELD:u8 = 0xb4; // getfield
@@ -1140,6 +1141,15 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = code[pc + 1] as i8 as i64;
                     frame.push_value(RuntimeValue::Int(value));
                     pc += 2;
+                },
+                opcodes::ARETURN => {
+                    let value = frame.pop_value_force()?;
+                    match value {
+                        RuntimeValue::Object(_) | RuntimeValue::String(_) | RuntimeValue::Null
+                        | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
+                        | RuntimeValue::ByteArray(_) => return Ok(value),
+                        _ => return Err("areturn requires a reference".to_string()),
+                    }
                 },
                 opcodes::IRETURN => {
                     pc += 1;
