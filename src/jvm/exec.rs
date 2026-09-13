@@ -145,6 +145,7 @@ pub mod opcodes {
     pub const NOP:u8 = 0x00; // nop
     pub const POP:u8 = 0x57; // pop
     pub const POP2:u8 = 0x58; // pop2
+    pub const SWAP:u8 = 0x5f; // swap
     pub const DUP2X1:u8 = 0x5d; // dup2_x1
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
@@ -912,6 +913,14 @@ fn group_start(stack: &[RuntimeValue], mut end: usize, mut slots: usize) -> Resu
         slots = slots.checked_sub(width).ok_or("invalid stack categories")?;
     }
     Ok(end)
+}
+
+fn swap_values(frame: &mut Frame) -> Result<(), String> {
+    // swap permits two category-1 values, never a long or double.
+    let top = group_start(&frame.stack, frame.stack.len(), 1)?;
+    let below = group_start(&frame.stack, top, 1)?;
+    frame.stack.swap(top, below);
+    Ok(())
 }
 
 fn pop_slots(frame: &mut Frame, slots: usize) -> Result<(), String> {
@@ -1791,6 +1800,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
+                },
+                opcodes::SWAP => {
+                    swap_values(frame)?;
+                    pc += 1;
                 },
                 opcodes::NOP => {
                     pc += 1;

@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn swap_category_one_values() {
+    use RuntimeValue::{Int as I, Null};
+    for (stack, expected) in [
+        (vec![I(3), I(1), I(2)], vec![I(3), I(2), I(1)]),
+        (vec![I(3), Null, I(1)], vec![I(3), I(1), Null]),
+    ] {
+        let mut frame = Frame { stack, locals: Vec::new() };
+        swap_values(&mut frame).unwrap();
+        assert_eq!(format!("{:?}", frame.stack), format!("{:?}", expected));
+    }
+}
+
+#[test]
+fn swap_rejects_invalid_stacks_without_mutating_them() {
+    use RuntimeValue::{Double as D, Int as I, Long as L, Void};
+    for stack in [
+        vec![], vec![I(1)], vec![I(1), L(2)], vec![L(1), I(2)],
+        vec![I(1), D(2.0)], vec![D(1.0), I(2)],
+        vec![I(1), Void], vec![Void, I(1)],
+    ] {
+        let before = format!("{:?}", stack);
+        let mut frame = Frame { stack, locals: Vec::new() };
+        assert!(swap_values(&mut frame).is_err());
+        assert_eq!(format!("{:?}", frame.stack), before);
+    }
+}
+
+#[test]
 fn pop_valid_forms() {
     use RuntimeValue::{Double as D, Int as I, Long as L, Null};
     for (slots, stack) in [
