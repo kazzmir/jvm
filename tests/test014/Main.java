@@ -3,5 +3,7 @@ public class Main {
         Object value = "hello";
         String message = (String) value;
         System.out.println(message);
+        String copy = message; // astore_3
+        System.out.println(copy); // aload_3
     }
 }

@@ -137,6 +137,7 @@ pub mod opcodes {
     pub const ALOAD0:u8 = 0x2a; // aload_0
     pub const ALOAD1:u8 = 0x2b; // aload_1
     pub const ALOAD2:u8 = 0x2c; // aload_2
+    pub const ALOAD3:u8 = 0x2d; // aload_3
     pub const ISTORE:u8 = 0x36; // istore
     pub const ISTORE0:u8 = 0x3b; // istore_0
     pub const ISTORE1:u8 = 0x3c; // istore_1
@@ -145,6 +146,7 @@ pub mod opcodes {
     pub const ASTORE0:u8 = 0x4b; // astore_0
     pub const ASTORE1:u8 = 0x4c; // astore_1
     pub const ASTORE2:u8 = 0x4d; // astore_2
+    pub const ASTORE3:u8 = 0x4e; // astore_3
     pub const DUP:u8 = 0x59; // dup
     pub const NOP:u8 = 0x00; // nop
     pub const POP:u8 = 0x57; // pop
@@ -1964,6 +1966,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.pop_value_force()?;
                     frame.locals[0] = value;
                 },
+                opcodes::ASTORE3 => {
+                    let value = frame.pop_value_force()?;
+                    *frame.locals.get_mut(3).ok_or("invalid astore_3 local index")? = value;
+                    pc += 1;
+                },
                 opcodes::ASTORE2 => {
                     let value = frame.pop_value_force()?;
                     frame.locals[2] = value;
@@ -2004,6 +2011,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = frame.locals[0].clone();
                     frame.push_value(value);
+                },
+                opcodes::ALOAD3 => {
+                    let value = frame.locals.get(3).ok_or("invalid aload_3 local index")?.clone();
+                    frame.push_value(value);
+                    pc += 1;
                 },
                 opcodes::ALOAD2 => {
                     frame.push_value(frame.locals[2].clone());
