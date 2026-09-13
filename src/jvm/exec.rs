@@ -27,6 +27,8 @@ pub mod opcodes {
     pub const DADD:u8 = 0x63; // dadd
     pub const I2D:u8 = 0x87; // i2d
     pub const ACONSTNULL:u8 = 0x01; // aconst_null
+    pub const CALOAD:u8 = 0x34; // caload
+    pub const CASTORE:u8 = 0x55; // castore
     pub const BALOAD:u8 = 0x33; // baload
     pub const BASTORE:u8 = 0x54; // bastore
     pub const AALOAD:u8 = 0x32; // aaload
@@ -73,11 +75,12 @@ pub mod opcodes {
 
 mod array_types {
     pub const BOOLEAN: u8 = 4;
+    pub const CHAR: u8 = 5;
     pub const DOUBLE: u8 = 7;
     pub const BYTE: u8 = 8;
 
     pub fn is_supported(atype: u8) -> bool {
-        matches!(atype, BOOLEAN | DOUBLE | BYTE)
+        matches!(atype, BOOLEAN | CHAR | DOUBLE | BYTE)
     }
 }
 
@@ -88,6 +91,7 @@ pub enum RuntimeValue{
     Float(f32),
     Double(f64),
     DoubleArray(rc::Rc<cell::RefCell<Vec<f64>>>),
+    CharArray(rc::Rc<cell::RefCell<Vec<u16>>>),
     ByteArray(rc::Rc<cell::RefCell<JVMByteArray>>),
     ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
     Null,
@@ -139,6 +143,9 @@ impl fmt::Debug for RuntimeValue {
             },
             RuntimeValue::DoubleArray(values) => {
                 write!(f, "DoubleArray({:?})", values.borrow())
+            },
+            RuntimeValue::CharArray(values) => {
+                write!(f, "CharArray({:?})", values.borrow())
             },
             RuntimeValue::ByteArray(array) => {
                 write!(f, "ByteArray({:?})", array.borrow().values)
@@ -254,6 +261,7 @@ fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) 
         RuntimeValue::Object(object) => is_instance_of(jvm, &object.borrow().class, target),
         RuntimeValue::String(_) => target == "java/lang/String" || target == "java/lang/Object",
         RuntimeValue::DoubleArray(_) => target == "[D" || array_supertype(target),
+        RuntimeValue::CharArray(_) => target == "[C" || array_supertype(target),
         RuntimeValue::ByteArray(array) => {
             target == (if array.borrow().is_boolean { "[Z" } else { "[B" }) || array_supertype(target)
         },
@@ -987,6 +995,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
                         values.resize(count, 0.0);
                         frame.push_value(RuntimeValue::DoubleArray(rc::Rc::new(cell::RefCell::new(values))));
+                    } else if atype == array_types::CHAR {
+                        let mut values = Vec::new();
+                        values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                        values.resize(count, 0);
+                        frame.push_value(RuntimeValue::CharArray(rc::Rc::new(cell::RefCell::new(values))));
                     } else {
                         let mut values = Vec::new();
                         values.try_reserve_exact(count).map_err(|err| err.to_string())?;
@@ -1000,11 +1013,39 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 opcodes::ARRAYLENGTH => {
                     let length = match frame.pop_value_force()? {
                         RuntimeValue::DoubleArray(values) => values.borrow().len(),
+                        RuntimeValue::CharArray(values) => values.borrow().len(),
                         RuntimeValue::ByteArray(array) => array.borrow().values.len(),
                         RuntimeValue::ReferenceArray(array) => array.borrow().values.len(),
                         _ => return Err("arraylength requires an array".to_string()),
                     };
                     frame.push_value(RuntimeValue::Int(length as i64));
+                    pc += 1;
+                },
+                opcodes::CALOAD | opcodes::CASTORE => {
+                    let stored = if code[pc] == opcodes::CASTORE {
+                        match frame.pop_value_force()? {
+                            RuntimeValue::Int(value) => Some(value as u16),
+                            _ => return Err("castore requires an integer".to_string()),
+                        }
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::CharArray(values) => {
+                            let mut values = values.borrow_mut();
+                            let slot = values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = value;
+                            } else {
+                                // Java chars are unsigned 16-bit values, not Unicode scalar values.
+                                frame.push_value(RuntimeValue::Int(*slot as i64));
+                            }
+                        },
+                        _ => return Err("char array required".to_string()),
+                    }
                     pc += 1;
                 },
                 opcodes::BALOAD | opcodes::BASTORE => {
@@ -1147,7 +1188,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     match value {
                         RuntimeValue::Object(_) | RuntimeValue::String(_) | RuntimeValue::Null
                         | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
-                        | RuntimeValue::ByteArray(_) => return Ok(value),
+                        | RuntimeValue::ByteArray(_) | RuntimeValue::CharArray(_) => return Ok(value),
                         _ => return Err("areturn requires a reference".to_string()),
                     }
                 },
