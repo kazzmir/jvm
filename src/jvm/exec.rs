@@ -17,6 +17,27 @@ pub mod opcodes {
     pub const ICONST3:u8 = 0x6; // iconst_3
     pub const ICONST4:u8 = 0x7; // iconst_4
     pub const ICONST5:u8 = 0x8; // iconst_5
+    pub const FCONST0:u8 = 0x0b; // fconst_0
+    pub const FCONST1:u8 = 0x0c; // fconst_1
+    pub const FCONST2:u8 = 0x0d; // fconst_2
+    pub const FLOAD:u8 = 0x17; // fload
+    pub const FLOAD0:u8 = 0x22; // fload_0
+    pub const FLOAD1:u8 = 0x23; // fload_1
+    pub const FLOAD2:u8 = 0x24; // fload_2
+    pub const FLOAD3:u8 = 0x25; // fload_3
+    pub const FSTORE:u8 = 0x38; // fstore
+    pub const FSTORE0:u8 = 0x43; // fstore_0
+    pub const FSTORE1:u8 = 0x44; // fstore_1
+    pub const FSTORE2:u8 = 0x45; // fstore_2
+    pub const FSTORE3:u8 = 0x46; // fstore_3
+    pub const FADD:u8 = 0x62; // fadd
+    pub const FSUB:u8 = 0x66; // fsub
+    pub const FMUL:u8 = 0x6a; // fmul
+    pub const FDIV:u8 = 0x6e; // fdiv
+    pub const FREM:u8 = 0x72; // frem
+    pub const FNEG:u8 = 0x76; // fneg
+    pub const F2I:u8 = 0x8b; // f2i
+    pub const F2D:u8 = 0x8d; // f2d
     pub const DCONST0:u8 = 0x0e; // dconst_0
     pub const DCONST1:u8 = 0x0f; // dconst_1
     pub const DLOAD:u8 = 0x18; // dload
@@ -1145,6 +1166,70 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                             }
                         },
                         _ => return Err("double array required".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::FCONST0 | opcodes::FCONST1 | opcodes::FCONST2 => {
+                    frame.push_value(RuntimeValue::Float((code[pc] - opcodes::FCONST0) as f32));
+                    pc += 1;
+                },
+                opcodes::FLOAD | opcodes::FLOAD0..=opcodes::FLOAD3 => {
+                    let (index, size) = if code[pc] == opcodes::FLOAD {
+                        (code[pc + 1] as usize, 2)
+                    } else { ((code[pc] - opcodes::FLOAD0) as usize, 1) };
+                    match frame.locals.get(index) {
+                        Some(RuntimeValue::Float(value)) => frame.push_value(RuntimeValue::Float(*value)),
+                        _ => return Err("fload requires a float local".to_string()),
+                    }
+                    pc += size;
+                },
+                opcodes::FSTORE | opcodes::FSTORE0..=opcodes::FSTORE3 => {
+                    let (index, size) = if code[pc] == opcodes::FSTORE {
+                        (code[pc + 1] as usize, 2)
+                    } else { ((code[pc] - opcodes::FSTORE0) as usize, 1) };
+                    let value = frame.pop_value_force()?;
+                    if !matches!(value, RuntimeValue::Float(_)) {
+                        return Err("fstore requires a float".to_string());
+                    }
+                    *frame.locals.get_mut(index).ok_or("invalid fstore local index")? = value;
+                    pc += size;
+                },
+                opcodes::F2I | opcodes::F2D => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Float(value) => value,
+                        _ => return Err("float conversion requires a float".to_string()),
+                    };
+                    let converted = if code[pc] == opcodes::F2I {
+                        // Truncate toward zero, saturate overflow, and map NaN to zero.
+                        RuntimeValue::Int(value as i32 as i64)
+                    } else {
+                        RuntimeValue::Double(value as f64)
+                    };
+                    frame.push_value(converted);
+                    pc += 1;
+                },
+                opcodes::FADD | opcodes::FSUB | opcodes::FMUL | opcodes::FDIV | opcodes::FREM => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    match (left, right) {
+                        (RuntimeValue::Float(left), RuntimeValue::Float(right)) => {
+                            let value = match code[pc] {
+                                opcodes::FADD => left + right,
+                                opcodes::FSUB => left - right,
+                                opcodes::FMUL => left * right,
+                                opcodes::FDIV => left / right,
+                                _ => left % right,
+                            };
+                            frame.push_value(RuntimeValue::Float(value));
+                        },
+                        _ => return Err("float arithmetic requires floats".to_string()),
+                    }
+                    pc += 1;
+                },
+                opcodes::FNEG => {
+                    match frame.pop_value_force()? {
+                        RuntimeValue::Float(value) => frame.push_value(RuntimeValue::Float(-value)),
+                        _ => return Err("fneg requires a float".to_string()),
                     }
                     pc += 1;
                 },
