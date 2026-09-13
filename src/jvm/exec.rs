@@ -106,8 +106,10 @@ pub mod opcodes {
     pub const IDIV:u8 = 0x6c; // idiv
     pub const IINC:u8 = 0x84; // iinc
     pub const TABLESWITCH:u8 = 0xaa; // tableswitch
+    pub const IFICOMPARELESS:u8 = 0xa1; // if_icmplt
     pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
     pub const GOTO:u8 = 0xa7; // goto
+    pub const GOTOW:u8 = 0xc8; // goto_w
     pub const IRETURN:u8 = 0xac; // ireturn
     pub const ARETURN:u8 = 0xb0; // areturn
     pub const RETURN:u8 = 0xb1; // return
@@ -972,7 +974,7 @@ fn do_icompare(frame: &mut Frame, pc: usize, offset: i16, compare: fn(i64, i64) 
     match (value1, value2) {
         (RuntimeValue::Int(i1), RuntimeValue::Int(i2)) => {
             if compare(i1, i2) {
-                return Ok((pc as i16 + offset) as usize);
+                return Ok((pc as isize + offset as isize) as usize);
             }
         }
         _ => {
@@ -1570,13 +1572,19 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         }
                     }
                 },
+                opcodes::IFICOMPARELESS => {
+                    pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 < i2)?;
+                },
                 opcodes::IFICOMPAREGREATEREQUAL => {
                     pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
                 },
                 opcodes::GOTO => {
-                    let old = pc;
-                    let offset = make_int16(code[pc+1], code[pc+2]);
-                    pc = (pc as i16 + offset as i16) as usize;
+                    let offset = make_int16(code[pc+1], code[pc+2]) as i16;
+                    pc = (pc as isize + offset as isize) as usize;
+                },
+                opcodes::GOTOW => {
+                    let offset = make_int32(code[pc+1], code[pc+2], code[pc+3], code[pc+4]) as i32;
+                    pc = (pc as isize + offset as isize) as usize;
                 },
                 opcodes::ILOAD => {
                     let index = code[pc + 1] as usize;
