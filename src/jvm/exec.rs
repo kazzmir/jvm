@@ -26,6 +26,10 @@ pub mod opcodes {
     pub const DASTORE:u8 = 0x52; // dastore
     pub const DADD:u8 = 0x63; // dadd
     pub const I2D:u8 = 0x87; // i2d
+    pub const ACONSTNULL:u8 = 0x01; // aconst_null
+    pub const AALOAD:u8 = 0x32; // aaload
+    pub const AASTORE:u8 = 0x53; // aastore
+    pub const ANEWARRAY:u8 = 0xbd; // anewarray
     pub const NEWARRAY:u8 = 0xbc; // newarray
     pub const ARRAYLENGTH:u8 = 0xbe; // arraylength
     pub const PUSHBYTE:u8 = 0x10; // bipush
@@ -71,9 +75,16 @@ pub enum RuntimeValue{
     Float(f32),
     Double(f64),
     DoubleArray(rc::Rc<cell::RefCell<Vec<f64>>>),
+    ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
+    Null,
     Void,
     String(String),
     Object(rc::Rc<cell::RefCell<JVMObject>>),
+}
+
+pub struct JVMReferenceArray {
+    component_class: String,
+    values: Vec<RuntimeValue>,
 }
 
 /*
@@ -110,6 +121,11 @@ impl fmt::Debug for RuntimeValue {
             RuntimeValue::DoubleArray(values) => {
                 write!(f, "DoubleArray({:?})", values.borrow())
             },
+            RuntimeValue::ReferenceArray(array) => {
+                let array = array.borrow();
+                write!(f, "ReferenceArray({}, length={})", array.component_class, array.values.len())
+            },
+            RuntimeValue::Null => write!(f, "Null"),
             RuntimeValue::Void => {
                 write!(f, "Void")
             },
@@ -208,6 +224,43 @@ fn lookup_class_name(pool: &ConstantPool, index: usize) -> Result<&str, String> 
         }
     }
     Err(format!("invalid class reference {}", index))
+}
+
+fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) -> bool {
+    match value {
+        RuntimeValue::Null => true,
+        RuntimeValue::Object(object) => is_instance_of(jvm, &object.borrow().class, target),
+        RuntimeValue::String(_) => target == "java/lang/String" || target == "java/lang/Object",
+        RuntimeValue::DoubleArray(_) => target == "[D" || array_supertype(target),
+        RuntimeValue::ReferenceArray(array) => {
+            if array_supertype(target) { return true; }
+            let component = array.borrow().component_class.clone();
+            let descriptor = if component.starts_with('[') {
+                format!("[{}", component)
+            } else { format!("[L{};", component) };
+            reference_class_assignable(jvm, &descriptor, target)
+        },
+        _ => false,
+    }
+}
+
+fn array_supertype(target: &str) -> bool {
+    matches!(target, "java/lang/Object" | "java/lang/Cloneable" | "java/io/Serializable")
+}
+
+fn reference_class_assignable(jvm: &RuntimeConst, source: &str, target: &str) -> bool {
+    if source == target { return true; }
+    if let Some(source) = source.strip_prefix('[') {
+        if array_supertype(target) { return true; }
+        if let Some(target) = target.strip_prefix('[') {
+            let component = |s: &str| -> String {
+                s.strip_prefix('L').and_then(|s| s.strip_suffix(';')).unwrap_or(s).to_string()
+            };
+            return reference_class_assignable(jvm, &component(source), &component(target));
+        }
+        return false;
+    }
+    is_instance_of(jvm, source, target)
 }
 
 fn is_instance_of(jvm: &RuntimeConst, class_name: &str, target: &str) -> bool {
@@ -847,6 +900,54 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
             let instruction_pc = pc;
             match code[pc] {
+                opcodes::ACONSTNULL => {
+                    frame.push_value(RuntimeValue::Null);
+                    pc += 1;
+                },
+                opcodes::ANEWARRAY => {
+                    let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
+                    let component_class = lookup_class_name(constant_pool, index)?.to_string();
+                    let count = match frame.pop_value_force()? {
+                        RuntimeValue::Int(count) if count >= 0 => count as usize,
+                        _ => return Err("invalid array length".to_string()),
+                    };
+                    let mut values = Vec::new();
+                    values.try_reserve_exact(count).map_err(|err| err.to_string())?;
+                    values.resize(count, RuntimeValue::Null);
+                    frame.push_value(RuntimeValue::ReferenceArray(rc::Rc::new(cell::RefCell::new(
+                        JVMReferenceArray { component_class, values }
+                    ))));
+                    pc += 3;
+                },
+                opcodes::AALOAD | opcodes::AASTORE => {
+                    let stored = if code[pc] == opcodes::AASTORE {
+                        Some(frame.pop_value_force()?)
+                    } else { None };
+                    let index = match frame.pop_value_force()? {
+                        RuntimeValue::Int(index) if index >= 0 => index as usize,
+                        RuntimeValue::Int(_) => return Err("array index out of bounds".to_string()),
+                        _ => return Err("array index must be an integer".to_string()),
+                    };
+                    match frame.pop_value_force()? {
+                        RuntimeValue::ReferenceArray(array) => {
+                            if let Some(value) = &stored {
+                                let component_class = array.borrow().component_class.clone();
+                                if !reference_assignable(jvm, value, &component_class) {
+                                    return Err("incompatible reference array element".to_string());
+                                }
+                            }
+                            let mut array = array.borrow_mut();
+                            let slot = array.values.get_mut(index).ok_or("array index out of bounds")?;
+                            if let Some(value) = stored {
+                                *slot = value;
+                            } else {
+                                frame.push_value(slot.clone());
+                            }
+                        },
+                        _ => return Err("reference array required".to_string()),
+                    }
+                    pc += 1;
+                },
                 opcodes::NEWARRAY => {
                     if code[pc + 1] != 7 {
                         return Err(format!("unsupported newarray type {}", code[pc + 1]));
@@ -864,6 +965,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 opcodes::ARRAYLENGTH => {
                     let length = match frame.pop_value_force()? {
                         RuntimeValue::DoubleArray(values) => values.borrow().len(),
+                        RuntimeValue::ReferenceArray(array) => array.borrow().values.len(),
                         _ => return Err("arraylength requires an array".to_string()),
                     };
                     frame.push_value(RuntimeValue::Int(length as i64));
