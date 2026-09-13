@@ -129,6 +129,8 @@ pub mod opcodes {
     pub const IFICOMPARELESS:u8 = 0xa1; // if_icmplt
     pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
     pub const GOTO:u8 = 0xa7; // goto
+    pub const JSR:u8 = 0xa8; // jsr
+    pub const RET:u8 = 0xa9; // ret
     pub const GOTOW:u8 = 0xc8; // goto_w
     pub const IRETURN:u8 = 0xac; // ireturn
     pub const ARETURN:u8 = 0xb0; // areturn
@@ -160,6 +162,7 @@ mod array_types {
 
 #[derive(Clone)]
 pub enum RuntimeValue{
+    ReturnAddress(usize),
     Int(i64),
     Long(i64),
     Float(f32),
@@ -232,6 +235,7 @@ impl fmt::Debug for RuntimeValue {
                 let array = array.borrow();
                 write!(f, "ReferenceArray({}, length={})", array.component_class, array.values.len())
             },
+            RuntimeValue::ReturnAddress(address) => write!(f, "ReturnAddress({})", address),
             RuntimeValue::Null => write!(f, "Null"),
             RuntimeValue::Void => {
                 write!(f, "Void")
@@ -1658,6 +1662,24 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 },
                 opcodes::IFICOMPAREGREATEREQUAL => {
                     pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 >= i2)?;
+                },
+                opcodes::JSR => {
+                    let operands = code.get(pc + 1..pc + 3).ok_or("truncated jsr")?;
+                    let offset = make_int16(operands[0], operands[1]) as i16;
+                    let target = pc as isize + offset as isize;
+                    if target < 0 || target as usize >= code.len() {
+                        return Err("jsr target out of bounds".to_string());
+                    }
+                    frame.push_value(RuntimeValue::ReturnAddress(pc + 3));
+                    pc = target as usize;
+                },
+                opcodes::RET => {
+                    let index = *code.get(pc + 1).ok_or("truncated ret")? as usize;
+                    pc = match frame.locals.get(index) {
+                        Some(RuntimeValue::ReturnAddress(address)) if *address < code.len() => *address,
+                        Some(RuntimeValue::ReturnAddress(_)) => return Err("ret target out of bounds".to_string()),
+                        _ => return Err("ret requires a returnAddress local".to_string()),
+                    };
                 },
                 opcodes::GOTO => {
                     let offset = make_int16(code[pc+1], code[pc+2]) as i16;

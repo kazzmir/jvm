@@ -14,6 +14,12 @@ def replace_extension(path, new):
     return os.path.splitext(path)[0] + new
 
 def compile_java_files(path):
+    # Legacy bytecodes such as jsr cannot be emitted by modern javac.
+    generator = 'generate_class.py'
+    if os.path.isfile(os.path.join(path, generator)):
+        subprocess.run([sys.executable, generator], cwd=path, check=True)
+        return
+
     def is_java_file(filename):
         return filename.endswith('.java')
     java_files = [f for f in os.listdir(path) if is_java_file(f)]
