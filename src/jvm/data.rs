@@ -69,6 +69,11 @@ struct AttributeInfo {
 */
 
 pub enum ConstantPoolEntry {
+    Integer(i32),
+    Float(f32),
+    Long(i64),
+    Double(f64),
+    Reserved,
     MethodHandle(u8, u16),
     MethodType(u16),
     InvokeDynamic(u16, u16),
@@ -87,6 +92,11 @@ impl ConstantPoolEntry {
             ConstantPoolEntry::MethodHandle(..) => "MethodHandle",
             ConstantPoolEntry::MethodType(_) => "MethodType",
             ConstantPoolEntry::InvokeDynamic(..) => "InvokeDynamic",
+            ConstantPoolEntry::Integer(_) => "Integer",
+            ConstantPoolEntry::Float(_) => "Float",
+            ConstantPoolEntry::Long(_) => "Long",
+            ConstantPoolEntry::Double(_) => "Double",
+            ConstantPoolEntry::Reserved => "Reserved",
             ConstantPoolEntry::Classref(_) => "Classref",
             ConstantPoolEntry::Methodref(_, _) => "Methodref",
             ConstantPoolEntry::InterfaceMethodref(_, _) => "InterfaceMethodref",
@@ -132,6 +142,10 @@ fn read_u8(file: &mut dyn std::io::Read) -> u8 {
     u8::from_be_bytes(buf)
 }
 
+const CONSTANT_INTEGER:u8 = 3;
+const CONSTANT_FLOAT:u8 = 4;
+const CONSTANT_LONG:u8 = 5;
+const CONSTANT_DOUBLE:u8 = 6;
 const CONSTANT_CLASSREF:u8 = 7;
 const CONSTANT_METHODREF:u8 = 10;
 const CONSTANT_INTERFACE_METHODREF:u8 = 11;
@@ -463,7 +477,10 @@ pub fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> 
             let constant_pool_count = read_u16_bigendian(&mut file);
 
             debug!("Reading constants {0}", constant_pool_count);
-            for _i in 0..constant_pool_count - 1 {
+            if constant_pool_count == 0 {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid constant pool count"));
+            }
+            while jvm_class_file.constant_pool.len() < constant_pool_count as usize - 1 {
                 /*
                 let mut constant_pool_info = ConstantPoolInfo {
                     tag: 0,
@@ -473,6 +490,28 @@ pub fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> 
                 let tag = read_u8(&mut file);
                 // println!("Read constant tag {0}", tag);
                 match tag {
+                    CONSTANT_INTEGER => {
+                        let value = read_u32_bigendian(&mut file) as i32;
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::Integer(value));
+                    },
+                    CONSTANT_FLOAT => {
+                        let value = f32::from_bits(read_u32_bigendian(&mut file));
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::Float(value));
+                    },
+                    CONSTANT_LONG | CONSTANT_DOUBLE => {
+                        if jvm_class_file.constant_pool.len() + 2 >= constant_pool_count as usize {
+                            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "missing reserved constant pool slot"));
+                        }
+                        let mut bytes = [0; 8];
+                        file.read_exact(&mut bytes)?;
+                        let entry = if tag == CONSTANT_LONG {
+                            ConstantPoolEntry::Long(i64::from_be_bytes(bytes))
+                        } else {
+                            ConstantPoolEntry::Double(f64::from_bits(u64::from_be_bytes(bytes)))
+                        };
+                        jvm_class_file.constant_pool.push(entry);
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::Reserved);
+                    },
                     CONSTANT_CLASSREF => {
                         // name index
                         let name = read_u16_bigendian(&mut file);

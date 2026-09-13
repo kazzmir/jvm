@@ -131,6 +131,8 @@ pub mod opcodes {
     pub const SALOAD:u8 = 0x35; // saload
     pub const SASTORE:u8 = 0x56; // sastore
     pub const PUSHRUNTIMECONSTANT:u8 = 0x12; // ldc
+    pub const LDCW:u8 = 0x13; // ldc_w
+    pub const LDC2W:u8 = 0x14; // ldc2_w
     pub const ILOAD:u8 = 0x15; // iload
     pub const ILOAD0:u8 = 0x1a; // iload_0
     pub const ILOAD1:u8 = 0x1b; // iload_1
@@ -968,8 +970,16 @@ fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeCo
 }
 
 fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, index: usize) -> Result<(), String> {
-    if index > 0 && index < constant_pool.len() {
+    if index > 0 && index <= constant_pool.len() {
         match constant_pool_lookup(constant_pool, index) {
+            Some(ConstantPoolEntry::Integer(value)) => {
+                frame.push_value(RuntimeValue::Int(*value as i64));
+                return Ok(());
+            },
+            Some(ConstantPoolEntry::Float(value)) => {
+                frame.push_value(RuntimeValue::Float(*value));
+                return Ok(());
+            },
             Some(ConstantPoolEntry::Utf8(name)) => {
                 debug!("Pushing constant utf8 {}", name);
             },
@@ -2471,6 +2481,21 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 },
                 opcodes::RETURN => {
                     return Ok(RuntimeValue::Void);
+                },
+                opcodes::LDCW | opcodes::LDC2W => {
+                    let operands = code.get(pc + 1..pc + 3).ok_or("truncated wide constant load")?;
+                    let index = make_int16(operands[0], operands[1]) as usize;
+                    if code[pc] == opcodes::LDCW {
+                        push_runtime_constant(constant_pool, frame, jvm, index)?;
+                    } else {
+                        let value = match constant_pool_lookup(constant_pool, index) {
+                            Some(ConstantPoolEntry::Long(value)) => RuntimeValue::Long(*value),
+                            Some(ConstantPoolEntry::Double(value)) => RuntimeValue::Double(*value),
+                            _ => return Err("ldc2_w requires a long or double constant".to_string()),
+                        };
+                        frame.push_value(value);
+                    }
+                    pc += 3;
                 },
                 opcodes::PUSHRUNTIMECONSTANT => {
                     let index = code[pc+1] as usize;
