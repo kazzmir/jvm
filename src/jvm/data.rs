@@ -69,6 +69,9 @@ struct AttributeInfo {
 */
 
 pub enum ConstantPoolEntry {
+    MethodHandle(u8, u16),
+    MethodType(u16),
+    InvokeDynamic(u16, u16),
     Classref(u16),
     Methodref(u16, u16),
     NameAndType{name_index:u16, descriptor_index:u16},
@@ -80,6 +83,9 @@ pub enum ConstantPoolEntry {
 impl ConstantPoolEntry {
     pub fn name(&self) -> &str {
         return match self {
+            ConstantPoolEntry::MethodHandle(..) => "MethodHandle",
+            ConstantPoolEntry::MethodType(_) => "MethodType",
+            ConstantPoolEntry::InvokeDynamic(..) => "InvokeDynamic",
             ConstantPoolEntry::Classref(_) => "Classref",
             ConstantPoolEntry::Methodref(_, _) => "Methodref",
             ConstantPoolEntry::NameAndType{..} => "NameAndType",
@@ -130,6 +136,9 @@ const CONSTANT_NAMEANDTYPE:u8 = 12;
 const CONSTANT_UTF8:u8 = 1;
 const CONSTANT_FIELDREF:u8 = 9;
 const CONSTANT_STRING:u8 = 8;
+const CONSTANT_METHOD_HANDLE:u8 = 15;
+const CONSTANT_METHOD_TYPE:u8 = 16;
+const CONSTANT_INVOKE_DYNAMIC:u8 = 18;
 
 pub struct ExceptionTableEntry {
     pub start_pc: u16,
@@ -149,6 +158,7 @@ pub struct StackMapFrameEntry{
 }
 
 pub enum AttributeKind {
+    BootstrapMethods(Vec<(u16, Vec<u16>)>),
     Ignored,
     Code{
         max_stack: u16,
@@ -292,6 +302,20 @@ fn read_attribute(file: &mut dyn std::io::Read, constant_pool: &ConstantPool) ->
     let mut result = file.take(length as u64);
 
     match lookup_utf8_constant(constant_pool, name_index as usize) {
+        Some("BootstrapMethods") => {
+            let count = read_u16_bigendian(&mut result);
+            let mut methods = Vec::new();
+            for _ in 0..count {
+                let reference = read_u16_bigendian(&mut result);
+                let count = read_u16_bigendian(&mut result);
+                let mut arguments = Vec::new();
+                for _ in 0..count {
+                    arguments.push(read_u16_bigendian(&mut result));
+                }
+                methods.push((reference, arguments));
+            }
+            Ok(AttributeKind::BootstrapMethods(methods))
+        },
         Some("Code") => {
             let max_stack = read_u16_bigendian(&mut result);
             let max_locals = read_u16_bigendian(&mut result);
@@ -510,6 +534,20 @@ pub fn parse_class_file(filename: &str) -> Result<JVMClassFile, std::io::Error> 
                             }
                         }
                         */
+                    },
+                    CONSTANT_METHOD_HANDLE => {
+                        let kind = read_u8(&mut file);
+                        let index = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::MethodHandle(kind, index));
+                    },
+                    CONSTANT_METHOD_TYPE => {
+                        let index = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::MethodType(index));
+                    },
+                    CONSTANT_INVOKE_DYNAMIC => {
+                        let bootstrap = read_u16_bigendian(&mut file);
+                        let name_and_type = read_u16_bigendian(&mut file);
+                        jvm_class_file.constant_pool.push(ConstantPoolEntry::InvokeDynamic(bootstrap, name_and_type));
                     },
                     CONSTANT_STRING => {
                         // string index

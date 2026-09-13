@@ -6,6 +6,8 @@ use std::fmt;
 use crate::debug;
 use super::data::*;
 
+mod dynamic;
+
 #[cfg(test)]
 mod tests;
 
@@ -131,6 +133,7 @@ pub mod opcodes {
     pub const INVOKEVIRTUAL:u8 = 0xb6; // invokevirtual
     pub const INVOKESPECIAL:u8 = 0xb7; // invokespecial
     pub const INVOKESTATIC:u8 = 0xb8; // invokestatic
+    pub const INVOKEDYNAMIC:u8 = 0xba; // invokedynamic
     pub const NEW:u8 = 0xbb; // new
     pub const ATHROW:u8 = 0xbf; // athrow
     pub const CHECKCAST:u8 = 0xc0; // checkcast
@@ -255,6 +258,7 @@ fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
                     }
 
                     return Ok(JVMClass{
+                        source: Some(jvmclass),
                         class: class_name.to_string(),
                         super_class: if jvmclass.super_class == 0 { None } else {
                             Some(lookup_class_name(&jvmclass.constant_pool, jvmclass.super_class as usize)?.to_string())
@@ -276,6 +280,7 @@ fn create_jvm_class(jvmclass: &JVMClassFile) -> Result<JVMClass, String> {
 }
 
 struct JVMClass<'a>{
+    source: Option<&'a JVMClassFile>,
     class: String,
     super_class: Option<String>,
     methods: HashMap<String, JVMMethod<'a>>,
@@ -1443,6 +1448,15 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         pc += 3;
                     }
                 },
+                opcodes::INVOKEDYNAMIC => {
+                    let operands = code.get(pc + 1..pc + 5).ok_or("truncated invokedynamic")?;
+                    if operands[2] != 0 || operands[3] != 0 {
+                        return Err("invalid invokedynamic reserved bytes".to_string());
+                    }
+                    let index = make_int16(operands[0], operands[1]) as usize;
+                    dynamic::invoke_concat(constant_pool, index, frame, jvm)?;
+                    pc += 5;
+                },
                 opcodes::INSTANCEOF => {
                     let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
                     let target = lookup_class_name(constant_pool, index)?;
@@ -1869,6 +1883,7 @@ fn create_java_io_print_stream<'a>() -> JVMClass<'a> {
     let fields = HashMap::new();
 
     return JVMClass{
+        source: None,
         class: "java/io/PrintStream".to_string(),
         super_class: Some("java/lang/Object".to_string()),
         methods: methods,
@@ -1884,6 +1899,7 @@ fn create_java_lang_system<'a>() -> JVMClass<'a> {
     let mut methods = HashMap::new();
 
     return JVMClass{
+        source: None,
         class: "java/lang/System".to_string(),
         super_class: Some("java/lang/Object".to_string()),
         methods: methods,
@@ -1917,6 +1933,7 @@ fn create_java_lang_object<'a>() -> JVMClass<'a> {
     }));
 
     return JVMClass{
+        source: None,
         class: "java/lang/Object".to_string(),
         super_class: None,
         methods: methods,
