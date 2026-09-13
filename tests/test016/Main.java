@@ -1,4 +1,8 @@
 public class Main {
+    public static double square(double value) {
+        return value * value; // dmul, dreturn
+    }
+
     // The two int parameters put the double in local slots 2 and 3.
     public static void testLocalSlot2(int first, int second) {
         double value = 1.0;
@@ -10,7 +14,7 @@ public class Main {
         double two = one + one; // dstore_3 / dload_3
 
         System.out.println(one / two);
-        System.out.println(two * two);
+        System.out.println(square(two));
         System.out.println(-two);
         System.out.println(one % two);
         System.out.println(one - two);
