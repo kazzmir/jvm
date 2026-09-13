@@ -11,6 +11,7 @@ mod tests;
 
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 pub mod opcodes {
+    pub const ICONSTM1:u8 = 0x02; // iconst_m1
     pub const ICONST0:u8 = 0x3; // iconst_0
     pub const ICONST1:u8 = 0x4; // iconst_1
     pub const ICONST2:u8 = 0x5; // iconst_2
@@ -62,6 +63,12 @@ pub mod opcodes {
     pub const FCMPG:u8 = 0x96; // fcmpg
     pub const DCMPL:u8 = 0x97; // dcmpl
     pub const DCMPG:u8 = 0x98; // dcmpg
+    pub const IFEQ:u8 = 0x99; // ifeq
+    pub const IFNE:u8 = 0x9a; // ifne
+    pub const IFLT:u8 = 0x9b; // iflt
+    pub const IFGT:u8 = 0x9d; // ifgt
+    pub const IFNULL:u8 = 0xc6; // ifnull
+    pub const IFNONNULL:u8 = 0xc7; // ifnonnull
     pub const IFGE:u8 = 0x9c; // ifge
     pub const IFLE:u8 = 0x9e; // ifle
     pub const I2L:u8 = 0x85; // i2l
@@ -1398,12 +1405,36 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     }
                     pc += 1;
                 },
-                opcodes::IFGE | opcodes::IFLE => {
+                opcodes::IFNULL | opcodes::IFNONNULL => {
+                    let is_null = match frame.pop_value_force()? {
+                        RuntimeValue::Null => true,
+                        RuntimeValue::Object(_) | RuntimeValue::String(_)
+                        | RuntimeValue::ReferenceArray(_) | RuntimeValue::DoubleArray(_)
+                        | RuntimeValue::FloatArray(_) | RuntimeValue::ByteArray(_)
+                        | RuntimeValue::CharArray(_) => false,
+                        _ => return Err("null branch requires a reference".to_string()),
+                    };
+                    let taken = if code[pc] == opcodes::IFNULL { is_null } else { !is_null };
+                    if taken {
+                        let offset = make_int16(code[pc + 1], code[pc + 2]) as i16;
+                        pc = (pc as isize + offset as isize) as usize;
+                    } else {
+                        pc += 3;
+                    }
+                },
+                opcodes::IFEQ | opcodes::IFNE | opcodes::IFLT | opcodes::IFGE | opcodes::IFGT | opcodes::IFLE => {
                     let value = match frame.pop_value_force()? {
                         RuntimeValue::Int(value) => value,
                         _ => return Err("integer branch requires an integer".to_string()),
                     };
-                    let taken = if code[pc] == opcodes::IFGE { value >= 0 } else { value <= 0 };
+                    let taken = match code[pc] {
+                        opcodes::IFEQ => value == 0,
+                        opcodes::IFNE => value != 0,
+                        opcodes::IFLT => value < 0,
+                        opcodes::IFGE => value >= 0,
+                        opcodes::IFGT => value > 0,
+                        _ => value <= 0,
+                    };
                     if taken {
                         let offset = make_int16(code[pc + 1], code[pc + 2]) as i16;
                         pc = (pc as isize + offset as isize) as usize;
@@ -1430,6 +1461,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         return Err("athrow requires an object".to_string());
                     }
                     *jvm.pending_exception.borrow_mut() = Some(exception);
+                },
+                opcodes::ICONSTM1 => {
+                    frame.push_value(RuntimeValue::Int(-1));
+                    pc += 1;
                 },
                 opcodes::ICONST0 => {
                     frame.push_value(RuntimeValue::Int(0));
