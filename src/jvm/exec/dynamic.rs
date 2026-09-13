@@ -78,6 +78,6 @@ pub(super) fn invoke_concat(pool: &ConstantPool, index: usize, frame: &mut Frame
         }
     }
     frame.stack.truncate(start);
-    frame.push_value(RuntimeValue::String(output));
+    frame.push_value(RuntimeValue::String(rc::Rc::new(output)));
     Ok(())
 }

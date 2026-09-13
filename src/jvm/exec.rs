@@ -168,6 +168,12 @@ pub mod opcodes {
     pub const WIDE:u8 = 0xc4; // wide
     pub const TABLESWITCH:u8 = 0xaa; // tableswitch
     pub const LOOKUPSWITCH:u8 = 0xab; // lookupswitch
+    pub const IFICOMPAREEQUAL:u8 = 0x9f; // if_icmpeq
+    pub const IFICOMPARENOTEQUAL:u8 = 0xa0; // if_icmpne
+    pub const IFICOMPAREGREATER:u8 = 0xa3; // if_icmpgt
+    pub const IFICOMPARELESSEQUAL:u8 = 0xa4; // if_icmple
+    pub const IFACMPEQ:u8 = 0xa5; // if_acmpeq
+    pub const IFACMPNE:u8 = 0xa6; // if_acmpne
     pub const IFICOMPARELESS:u8 = 0xa1; // if_icmplt
     pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
     pub const GOTO:u8 = 0xa7; // goto
@@ -224,7 +230,7 @@ pub enum RuntimeValue{
     ReferenceArray(rc::Rc<cell::RefCell<JVMReferenceArray>>),
     Null,
     Void,
-    String(String),
+    String(rc::Rc<String>),
     Object(rc::Rc<cell::RefCell<JVMObject>>),
 }
 
@@ -387,6 +393,7 @@ struct Frame {
 struct RuntimeConst<'a> {
     classes: HashMap<String, JVMClass<'a>>,
     pending_exception: cell::RefCell<Option<RuntimeValue>>,
+    interned_strings: cell::RefCell<HashMap<String, rc::Rc<String>>>,
 }
 
 fn lookup_class_name(pool: &ConstantPool, index: usize) -> Result<&str, String> {
@@ -396,6 +403,32 @@ fn lookup_class_name(pool: &ConstantPool, index: usize) -> Result<&str, String> 
         }
     }
     Err(format!("invalid class reference {}", index))
+}
+
+fn references_equal(left: &RuntimeValue, right: &RuntimeValue) -> Result<bool, String> {
+    fn is_reference(value: &RuntimeValue) -> bool {
+        matches!(value, RuntimeValue::Null | RuntimeValue::Object(_) | RuntimeValue::String(_)
+            | RuntimeValue::ReferenceArray(_) | RuntimeValue::IntArray(_) | RuntimeValue::LongArray(_)
+            | RuntimeValue::FloatArray(_) | RuntimeValue::DoubleArray(_) | RuntimeValue::ByteArray(_)
+            | RuntimeValue::CharArray(_) | RuntimeValue::ShortArray(_))
+    }
+    if !is_reference(left) || !is_reference(right) {
+        return Err("reference comparison requires references".to_string());
+    }
+    Ok(match (left, right) {
+        (RuntimeValue::Null, RuntimeValue::Null) => true,
+        (RuntimeValue::Object(left), RuntimeValue::Object(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::String(left), RuntimeValue::String(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::ReferenceArray(left), RuntimeValue::ReferenceArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::IntArray(left), RuntimeValue::IntArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::LongArray(left), RuntimeValue::LongArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::FloatArray(left), RuntimeValue::FloatArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::DoubleArray(left), RuntimeValue::DoubleArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::ByteArray(left), RuntimeValue::ByteArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::CharArray(left), RuntimeValue::CharArray(right)) => rc::Rc::ptr_eq(left, right),
+        (RuntimeValue::ShortArray(left), RuntimeValue::ShortArray(right)) => rc::Rc::ptr_eq(left, right),
+        _ => false,
+    })
 }
 
 fn reference_assignable(jvm: &RuntimeConst, value: &RuntimeValue, target: &str) -> bool {
@@ -885,7 +918,7 @@ fn op_getstatic(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeCo
     return Err(format!("error in getstatic with index {}", field_index).to_string());
 }
 
-fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index: usize) -> Result<(), String> {
+fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, jvm: &RuntimeConst, index: usize) -> Result<(), String> {
     if index > 0 && index < constant_pool.len() {
         match constant_pool_lookup(constant_pool, index) {
             Some(ConstantPoolEntry::Utf8(name)) => {
@@ -896,7 +929,9 @@ fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index:
                 match constant_pool_lookup(constant_pool, *string_index as usize) {
                     Some(ConstantPoolEntry::Utf8(name)) => {
                         debug!("Pushing constant utf8 '{}'", name);
-                        frame.push_value(RuntimeValue::String(name.clone()));
+                        let value = jvm.interned_strings.borrow_mut().entry(name.clone())
+                            .or_insert_with(|| rc::Rc::new(name.clone())).clone();
+                        frame.push_value(RuntimeValue::String(value));
                         return Ok(());
                     },
                     None => {
@@ -2081,6 +2116,28 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                         }
                     }
                 },
+                opcodes::IFACMPEQ | opcodes::IFACMPNE => {
+                    let right = frame.pop_value_force()?;
+                    let left = frame.pop_value_force()?;
+                    let equal = references_equal(&left, &right)?;
+                    let taken = if code[pc] == opcodes::IFACMPEQ { equal } else { !equal };
+                    if taken {
+                        let offset = make_int16(code[pc + 1], code[pc + 2]) as i16;
+                        pc = (pc as isize + offset as isize) as usize;
+                    } else {
+                        pc += 3;
+                    }
+                },
+                opcodes::IFICOMPAREEQUAL | opcodes::IFICOMPARENOTEQUAL
+                | opcodes::IFICOMPAREGREATER | opcodes::IFICOMPARELESSEQUAL => {
+                    let compare: fn(i64, i64) -> bool = match code[pc] {
+                        opcodes::IFICOMPAREEQUAL => |left, right| left == right,
+                        opcodes::IFICOMPARENOTEQUAL => |left, right| left != right,
+                        opcodes::IFICOMPAREGREATER => |left, right| left > right,
+                        _ => |left, right| left <= right,
+                    };
+                    pc = do_icompare(frame, pc, make_int16(code[pc + 1], code[pc + 2]) as i16, compare)?;
+                },
                 opcodes::IFICOMPARELESS => {
                     pc = do_icompare(frame, pc, make_int16(code[pc+1], code[pc+2]) as i16, |i1, i2| i1 < i2)?;
                 },
@@ -2281,7 +2338,7 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 },
                 opcodes::PUSHRUNTIMECONSTANT => {
                     let index = code[pc+1] as usize;
-                    push_runtime_constant(constant_pool, frame, index)?;
+                    push_runtime_constant(constant_pool, frame, jvm, index)?;
                     pc += 2;
                 },
                 _ => {
@@ -2445,6 +2502,7 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
     return RuntimeConst{
         classes: classes,
         pending_exception: cell::RefCell::new(None),
+        interned_strings: cell::RefCell::new(HashMap::new()),
     }
 }
 
