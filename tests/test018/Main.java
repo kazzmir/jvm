@@ -1,4 +1,8 @@
 public class Main {
+    public static float square(float value) {
+        return value * value; // fmul, freturn
+    }
+
     public static void main(String... args) {
         float zero = 0.0f; // fconst_0
         float one = 1.0f; // fconst_1
@@ -11,7 +15,7 @@ public class Main {
 
         System.out.println(one + two); // fadd
         System.out.println(one / two); // fdiv
-        System.out.println(two * two); // fmul
+        System.out.println(square(two)); // fmul and freturn in the helper
         System.out.println(-two); // fneg
         System.out.println(one % two); // frem
         System.out.println(one - two); // fsub

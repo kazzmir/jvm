@@ -187,6 +187,7 @@ pub mod opcodes {
     pub const RET:u8 = 0xa9; // ret
     pub const GOTOW:u8 = 0xc8; // goto_w
     pub const IRETURN:u8 = 0xac; // ireturn
+    pub const FRETURN:u8 = 0xae; // freturn
     pub const DRETURN:u8 = 0xaf; // dreturn
     pub const ARETURN:u8 = 0xb0; // areturn
     pub const RETURN:u8 = 0xb1; // return
@@ -2007,6 +2008,12 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = code[pc + 1] as i8 as i64;
                     frame.push_value(RuntimeValue::Int(value));
                     pc += 2;
+                },
+                opcodes::FRETURN => {
+                    return match frame.pop_value_force()? {
+                        RuntimeValue::Float(value) => Ok(RuntimeValue::Float(value)),
+                        _ => Err("freturn requires a float".to_string()),
+                    };
                 },
                 opcodes::DRETURN => {
                     return match frame.pop_value_force()? {
