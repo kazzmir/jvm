@@ -45,6 +45,7 @@ pub mod opcodes {
     pub const ILOAD3:u8 = 0x1d; // iload_3
     pub const ALOAD0:u8 = 0x2a; // aload_0
     pub const ALOAD1:u8 = 0x2b; // aload_1
+    pub const ALOAD2:u8 = 0x2c; // aload_2
     pub const ISTORE:u8 = 0x36; // istore
     pub const ISTORE0:u8 = 0x3b; // istore_0
     pub const ISTORE1:u8 = 0x3c; // istore_1
@@ -52,6 +53,7 @@ pub mod opcodes {
     pub const ISTORE3:u8 = 0x3e; // istore_3
     pub const ASTORE0:u8 = 0x4b; // astore_0
     pub const ASTORE1:u8 = 0x4c; // astore_1
+    pub const ASTORE2:u8 = 0x4d; // astore_2
     pub const DUP:u8 = 0x59; // dup
     pub const IADD:u8 = 0x60; // iadd
     pub const IMUL:u8 = 0x68; // imul
@@ -71,6 +73,7 @@ pub mod opcodes {
     pub const INVOKESTATIC:u8 = 0xb8; // invokestatic
     pub const NEW:u8 = 0xbb; // new
     pub const ATHROW:u8 = 0xbf; // athrow
+    pub const CHECKCAST:u8 = 0xc0; // checkcast
 }
 
 mod array_types {
@@ -1147,6 +1150,19 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     }
                     pc += 1;
                 },
+                opcodes::CHECKCAST => {
+                    let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
+                    let target = lookup_class_name(constant_pool, index)?;
+                    let value = frame.stack.last().ok_or("Stack underflow")?;
+                    if !reference_assignable(jvm, value, target) {
+                        let class = jvm.lookup_class("java/lang/ClassCastException")
+                            .ok_or("ClassCastException class not found")?;
+                        *jvm.pending_exception.borrow_mut() = Some(RuntimeValue::Object(
+                            rc::Rc::new(cell::RefCell::new(class.create_object()))
+                        ));
+                    }
+                    pc += 3;
+                },
                 opcodes::ATHROW => {
                     let exception = frame.pop_value_force()?;
                     if !matches!(exception, RuntimeValue::Object(_)) {
@@ -1212,6 +1228,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     let value = frame.pop_value_force()?;
                     frame.locals[0] = value;
                 },
+                opcodes::ASTORE2 => {
+                    let value = frame.pop_value_force()?;
+                    frame.locals[2] = value;
+                    pc += 1;
+                },
                 opcodes::ASTORE1 => {
                     pc += 1;
                     let value = frame.pop_value_force()?;
@@ -1247,6 +1268,10 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = frame.locals[0].clone();
                     frame.push_value(value);
+                },
+                opcodes::ALOAD2 => {
+                    frame.push_value(frame.locals[2].clone());
+                    pc += 1;
                 },
                 opcodes::ALOAD1 => {
                     pc += 1;
@@ -1582,7 +1607,8 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
 
     for (name, parent) in [("java/lang/Throwable", "java/lang/Object"),
                            ("java/lang/Exception", "java/lang/Throwable"),
-                           ("java/lang/RuntimeException", "java/lang/Exception")] {
+                           ("java/lang/RuntimeException", "java/lang/Exception"),
+                           ("java/lang/ClassCastException", "java/lang/RuntimeException")] {
         let mut class = create_java_lang_object();
         class.class = name.to_string();
         class.super_class = Some(parent.to_string());
