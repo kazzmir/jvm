@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn pop_valid_forms() {
+    use RuntimeValue::{Double as D, Int as I, Long as L, Null};
+    for (slots, stack) in [
+        (1, vec![I(99), I(1)]),
+        (1, vec![I(99), Null]),
+        (2, vec![I(99), I(1), I(2)]),
+        (2, vec![I(99), L(1)]),
+        (2, vec![I(99), D(1.0)]),
+    ] {
+        let mut frame = Frame { stack, locals: Vec::new() };
+        pop_slots(&mut frame, slots).unwrap();
+        assert!(matches!(frame.stack.as_slice(), [RuntimeValue::Int(99)]));
+    }
+}
+
+#[test]
+fn pop_rejects_invalid_stacks_without_mutating_them() {
+    use RuntimeValue::{Double as D, Int as I, Long as L, Void};
+    for (slots, stack) in [
+        (1, vec![]),
+        (2, vec![]),
+        (1, vec![L(1)]),
+        (1, vec![D(1.0)]),
+        (2, vec![I(1)]),
+        (2, vec![L(1), I(2)]),
+        (1, vec![Void]),
+        (2, vec![Void, I(1)]),
+    ] {
+        let before = format!("{:?}", stack);
+        let mut frame = Frame { stack, locals: Vec::new() };
+        assert!(pop_slots(&mut frame, slots).is_err());
+        assert_eq!(format!("{:?}", frame.stack), before);
+    }
+}
+
+#[test]
 fn dup2_x_forms() {
     use RuntimeValue::{Double as D, Int as I, Long as L};
     let cases = vec![

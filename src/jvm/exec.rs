@@ -139,6 +139,9 @@ pub mod opcodes {
     pub const ASTORE1:u8 = 0x4c; // astore_1
     pub const ASTORE2:u8 = 0x4d; // astore_2
     pub const DUP:u8 = 0x59; // dup
+    pub const NOP:u8 = 0x00; // nop
+    pub const POP:u8 = 0x57; // pop
+    pub const POP2:u8 = 0x58; // pop2
     pub const DUP2X1:u8 = 0x5d; // dup2_x1
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
@@ -870,20 +873,26 @@ fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index:
     return Err("error with push constant".to_string());
 }
 
-fn duplicate_two_slots(frame: &mut Frame, depth: usize) -> Result<(), String> {
-    fn group_start(stack: &[RuntimeValue], mut end: usize, mut slots: usize) -> Result<usize, String> {
-        while slots > 0 {
-            end = end.checked_sub(1).ok_or("Stack underflow")?;
-            let width = match &stack[end] {
-                RuntimeValue::Double(_) | RuntimeValue::Long(_) => 2,
-                RuntimeValue::Void => return Err("invalid void operand".to_string()),
-                _ => 1,
-            };
-            slots = slots.checked_sub(width).ok_or("invalid stack categories for dup2_x instruction")?;
-        }
-        Ok(end)
+fn group_start(stack: &[RuntimeValue], mut end: usize, mut slots: usize) -> Result<usize, String> {
+    while slots > 0 {
+        end = end.checked_sub(1).ok_or("Stack underflow")?;
+        let width = match &stack[end] {
+            RuntimeValue::Double(_) | RuntimeValue::Long(_) => 2,
+            RuntimeValue::Void => return Err("invalid void operand".to_string()),
+            _ => 1,
+        };
+        slots = slots.checked_sub(width).ok_or("invalid stack categories")?;
     }
+    Ok(end)
+}
 
+fn pop_slots(frame: &mut Frame, slots: usize) -> Result<(), String> {
+    let start = group_start(&frame.stack, frame.stack.len(), slots)?;
+    frame.stack.truncate(start);
+    Ok(())
+}
+
+fn duplicate_two_slots(frame: &mut Frame, depth: usize) -> Result<(), String> {
     // Category-2 values occupy one Vec entry, but two JVM stack slots.
     let top = group_start(&frame.stack, frame.stack.len(), 2)?;
     let insert = group_start(&frame.stack, top, depth)?;
@@ -1714,6 +1723,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
+                },
+                opcodes::NOP => {
+                    pc += 1;
+                },
+                opcodes::POP | opcodes::POP2 => {
+                    let slots = if code[pc] == opcodes::POP { 1 } else { 2 };
+                    pop_slots(frame, slots)?;
+                    pc += 1;
                 },
                 opcodes::DUP2X1 | opcodes::DUP2X2 => {
                     let depth = if code[pc] == opcodes::DUP2X1 { 1 } else { 2 };
