@@ -154,6 +154,7 @@ pub mod opcodes {
     pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
     pub const IMUL:u8 = 0x68; // imul
+    pub const INEG:u8 = 0x74; // ineg
     pub const ISHL:u8 = 0x78; // ishl
     pub const ISHR:u8 = 0x7a; // ishr
     pub const IUSHR:u8 = 0x7c; // iushr
@@ -2134,6 +2135,14 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     };
                     let value = do_iop(frame, operation)?;
                     frame.push_value(value);
+                    pc += 1;
+                },
+                opcodes::INEG => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Int(value) => (value as i32).wrapping_neg() as i64,
+                        _ => return Err("ineg requires an integer".to_string()),
+                    };
+                    frame.push_value(RuntimeValue::Int(value));
                     pc += 1;
                 },
                 opcodes::IADD => {

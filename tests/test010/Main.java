@@ -20,6 +20,7 @@ public class Main{
         }
 
         System.out.println(total);
+        System.out.println(-total); // ineg
     }
 
     public static void main(String... args){

@@ -12,6 +12,7 @@ public class Main{
         }
 
         System.out.println(total);
+        System.out.println(-N); // ineg
     }
 
     public static void main(String... args){

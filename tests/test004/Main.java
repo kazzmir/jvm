@@ -12,5 +12,6 @@ public class Main{
     public static void main(String... args){
         Main m = new Main(5);
         System.out.println(m.get(4));
+        System.out.println(-m.get(4)); // ineg
     }
 }

@@ -10,5 +10,6 @@ public class Main {
         System.out.println((float) value); // i2f
         System.out.println((long) value); // i2l
         System.out.println((short) value); // i2s
+        System.out.println(-value); // ineg
     }
 }
