@@ -164,6 +164,7 @@ pub mod opcodes {
     pub const IINC:u8 = 0x84; // iinc
     pub const WIDE:u8 = 0xc4; // wide
     pub const TABLESWITCH:u8 = 0xaa; // tableswitch
+    pub const LOOKUPSWITCH:u8 = 0xab; // lookupswitch
     pub const IFICOMPARELESS:u8 = 0xa1; // if_icmplt
     pub const IFICOMPAREGREATEREQUAL:u8 = 0xa2; // if_icmpge
     pub const GOTO:u8 = 0xa7; // goto
@@ -1145,6 +1146,36 @@ fn make_int16(byte1:u8, byte2:u8) -> u16 {
     return ((byte1 as u16) << 8) | (byte2 as u16)
 }
 
+fn lookup_switch_target(code: &[u8], pc: usize, key: i32) -> Result<usize, String> {
+    // Padding aligns the default field relative to the start of the method.
+    let start = (pc + 4) & !3;
+    let header = code.get(start..start + 8).ok_or("truncated lookupswitch header")?;
+    let mut offset = make_int32(header[0], header[1], header[2], header[3]) as i32;
+    let count = make_int32(header[4], header[5], header[6], header[7]) as i32;
+    if count < 0 {
+        return Err("negative lookupswitch pair count".to_string());
+    }
+    let bytes = (count as usize).checked_mul(8).ok_or("lookupswitch table too large")?;
+    let end = (start + 8).checked_add(bytes).ok_or("lookupswitch table too large")?;
+    let pairs = code.get(start + 8..end).ok_or("truncated lookupswitch pairs")?;
+    let mut previous = None;
+    for pair in pairs.chunks_exact(8) {
+        let candidate = make_int32(pair[0], pair[1], pair[2], pair[3]) as i32;
+        if previous.map_or(false, |previous| candidate <= previous) {
+            return Err("lookupswitch keys must be strictly increasing".to_string());
+        }
+        previous = Some(candidate);
+        if candidate == key {
+            offset = make_int32(pair[4], pair[5], pair[6], pair[7]) as i32;
+        }
+    }
+    let target = pc as i64 + offset as i64;
+    if target < 0 || target >= code.len() as i64 {
+        return Err("lookupswitch target out of bounds".to_string());
+    }
+    Ok(target as usize)
+}
+
 fn make_int32(byte1:u8, byte2:u8, byte3:u8, byte4:u8) -> u32 {
     let b1 = byte1 as u32;
     let b2 = byte2 as u32;
@@ -1981,6 +2012,13 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     pc += 1;
                     let value = frame.locals[1].clone();
                     frame.push_value(value);
+                },
+                opcodes::LOOKUPSWITCH => {
+                    let key = match frame.pop_value_force()? {
+                        RuntimeValue::Int(value) => value as i32,
+                        _ => return Err("lookupswitch requires an integer key".to_string()),
+                    };
+                    pc = lookup_switch_target(code, pc, key)?;
                 },
                 opcodes::TABLESWITCH => {
                     let original_pc = pc;

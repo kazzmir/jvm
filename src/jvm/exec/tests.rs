@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn lookup_switch_alignment_signed_keys_and_offsets() {
+    for pc in 4..8 {
+        let start = (pc + 4) & !3;
+        let mut code = vec![0; start];
+        code[pc] = opcodes::LOOKUPSWITCH;
+        for value in [-4_i32, 2, -1000, 40, 1000, -4] {
+            code.extend_from_slice(&value.to_be_bytes());
+        }
+        code.resize(64, 0);
+        assert_eq!(lookup_switch_target(&code, pc, -1000).unwrap(), pc + 40);
+        assert_eq!(lookup_switch_target(&code, pc, 1000).unwrap(), pc - 4);
+        assert_eq!(lookup_switch_target(&code, pc, 0).unwrap(), pc - 4);
+    }
+}
+
+#[test]
+fn lookup_switch_empty_and_malformed_tables() {
+    let mut code = vec![opcodes::LOOKUPSWITCH, 0, 0, 0];
+    code.extend_from_slice(&12_i32.to_be_bytes());
+    code.extend_from_slice(&0_i32.to_be_bytes());
+    code.push(opcodes::RETURN);
+    assert_eq!(lookup_switch_target(&code, 0, 42).unwrap(), 12);
+    assert!(lookup_switch_target(&code[..8], 0, 0).is_err());
+    code[8..12].copy_from_slice(&1_i32.to_be_bytes());
+    assert!(lookup_switch_target(&code, 0, 0).is_err());
+    code[8..12].copy_from_slice(&(-1_i32).to_be_bytes());
+    assert!(lookup_switch_target(&code, 0, 0).is_err());
+    code[8..12].copy_from_slice(&0_i32.to_be_bytes());
+    code[4..8].copy_from_slice(&(-1_i32).to_be_bytes());
+    assert!(lookup_switch_target(&code, 0, 0).is_err());
+}
+
+#[test]
 fn wide_integer_locals_and_wrapping_increment() {
     let mut frame = Frame {
         stack: vec![RuntimeValue::Int(i32::MAX as i64)],
