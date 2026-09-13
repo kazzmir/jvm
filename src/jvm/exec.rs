@@ -6,6 +6,9 @@ use std::fmt;
 use crate::debug;
 use super::data::*;
 
+#[cfg(test)]
+mod tests;
+
 // https://docs.oracle.com/javase/specs/jvms/se20/html/jvms-6.html#jvms-6.5
 pub mod opcodes {
     pub const ICONST0:u8 = 0x3; // iconst_0
@@ -71,6 +74,8 @@ pub mod opcodes {
     pub const ASTORE1:u8 = 0x4c; // astore_1
     pub const ASTORE2:u8 = 0x4d; // astore_2
     pub const DUP:u8 = 0x59; // dup
+    pub const DUP2X1:u8 = 0x5d; // dup2_x1
+    pub const DUP2X2:u8 = 0x5e; // dup2_x2
     pub const IADD:u8 = 0x60; // iadd
     pub const IMUL:u8 = 0x68; // imul
     pub const IDIV:u8 = 0x6c; // idiv
@@ -772,6 +777,28 @@ fn push_runtime_constant(constant_pool: &ConstantPool, frame: &mut Frame, index:
     return Err("error with push constant".to_string());
 }
 
+fn duplicate_two_slots(frame: &mut Frame, depth: usize) -> Result<(), String> {
+    fn group_start(stack: &[RuntimeValue], mut end: usize, mut slots: usize) -> Result<usize, String> {
+        while slots > 0 {
+            end = end.checked_sub(1).ok_or("Stack underflow")?;
+            let width = match &stack[end] {
+                RuntimeValue::Double(_) | RuntimeValue::Long(_) => 2,
+                RuntimeValue::Void => return Err("invalid void operand".to_string()),
+                _ => 1,
+            };
+            slots = slots.checked_sub(width).ok_or("invalid stack categories for dup2_x instruction")?;
+        }
+        Ok(end)
+    }
+
+    // Category-2 values occupy one Vec entry, but two JVM stack slots.
+    let top = group_start(&frame.stack, frame.stack.len(), 2)?;
+    let insert = group_start(&frame.stack, top, depth)?;
+    let duplicate = frame.stack[top..].to_vec();
+    frame.stack.splice(insert..insert, duplicate);
+    Ok(())
+}
+
 fn do_iop(frame: &mut Frame, op: fn(i64, i64) -> i64) -> Result<RuntimeValue, String> {
     let value1 = frame.pop_value_force()?;
     let value2 = frame.pop_value_force()?;
@@ -1290,6 +1317,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
                     return Ok(frame.pop_value_force()?);
                     // return Ok(value);
+                },
+                opcodes::DUP2X1 | opcodes::DUP2X2 => {
+                    let depth = if code[pc] == opcodes::DUP2X1 { 1 } else { 2 };
+                    duplicate_two_slots(frame, depth)?;
+                    pc += 1;
                 },
                 opcodes::DUP => {
                     pc += 1;
