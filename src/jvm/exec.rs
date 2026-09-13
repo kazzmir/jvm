@@ -26,6 +26,9 @@ pub mod opcodes {
     pub const DASTORE:u8 = 0x52; // dastore
     pub const DADD:u8 = 0x63; // dadd
     pub const I2D:u8 = 0x87; // i2d
+    pub const D2I:u8 = 0x8e; // d2i
+    pub const D2L:u8 = 0x8f; // d2l
+    pub const D2F:u8 = 0x90; // d2f
     pub const ACONSTNULL:u8 = 0x01; // aconst_null
     pub const CALOAD:u8 = 0x34; // caload
     pub const CASTORE:u8 = 0x55; // castore
@@ -1132,6 +1135,20 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     frame.locals[index + 1] = RuntimeValue::Void;
                     pc += size;
                 },
+                opcodes::D2I | opcodes::D2L | opcodes::D2F => {
+                    let value = match frame.pop_value_force()? {
+                        RuntimeValue::Double(value) => value,
+                        _ => return Err("double conversion requires a double".to_string()),
+                    };
+                    let converted = match code[pc] {
+                        // Rust casts truncate toward zero, saturate overflow, and map NaN to zero.
+                        opcodes::D2I => RuntimeValue::Int(value as i32 as i64),
+                        opcodes::D2L => RuntimeValue::Long(value as i64),
+                        _ => RuntimeValue::Float(value as f32),
+                    };
+                    frame.push_value(converted);
+                    pc += 1;
+                },
                 opcodes::I2D => {
                     match frame.pop_value_force()? {
                         RuntimeValue::Int(value) => frame.push_value(RuntimeValue::Double(value as f64)),
@@ -1521,8 +1538,15 @@ fn create_java_io_print_stream<'a>() -> JVMClass<'a> {
                 RuntimeValue::String(s) => {
                     println!("{}", s);
                 },
-                RuntimeValue::Int(i) => {
+                RuntimeValue::Int(i) | RuntimeValue::Long(i) => {
                     println!("{}", i);
+                },
+                RuntimeValue::Float(value) => {
+                    if value.is_infinite() {
+                        println!("{}Infinity", if value.is_sign_negative() { "-" } else { "" });
+                    } else {
+                        println!("{:?}", value);
+                    }
                 },
                 RuntimeValue::Double(value) => {
                     if value.is_infinite() {
