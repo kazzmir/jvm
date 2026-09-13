@@ -134,6 +134,7 @@ pub mod opcodes {
     pub const NEW:u8 = 0xbb; // new
     pub const ATHROW:u8 = 0xbf; // athrow
     pub const CHECKCAST:u8 = 0xc0; // checkcast
+    pub const INSTANCEOF:u8 = 0xc1; // instanceof
 }
 
 mod array_types {
@@ -1441,6 +1442,16 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     } else {
                         pc += 3;
                     }
+                },
+                opcodes::INSTANCEOF => {
+                    let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
+                    let target = lookup_class_name(constant_pool, index)?;
+                    let value = frame.pop_value_force()?;
+                    // Null is assignable for checkcast, but never an instance of a class.
+                    let matches = !matches!(value, RuntimeValue::Null)
+                        && reference_assignable(jvm, &value, target);
+                    frame.push_value(RuntimeValue::Int(if matches { 1 } else { 0 }));
+                    pc += 3;
                 },
                 opcodes::CHECKCAST => {
                     let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
