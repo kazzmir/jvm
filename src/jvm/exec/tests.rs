@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn monitors_are_reentrant_and_identity_based() {
+    let jvm = create_runtime_const();
+    let lock = RuntimeValue::String(rc::Rc::new("lock".to_string()));
+    let other = RuntimeValue::String(rc::Rc::new("lock".to_string()));
+    execute_monitor(&jvm, lock.clone(), true).unwrap();
+    execute_monitor(&jvm, lock.clone(), true).unwrap();
+    assert_eq!(jvm.monitors.borrow()[0].1, 2);
+    execute_monitor(&jvm, other, false).unwrap();
+    let exception = jvm.pending_exception.borrow_mut().take().unwrap();
+    assert!(reference_assignable(&jvm, &exception, "java/lang/IllegalMonitorStateException"));
+    assert_eq!(jvm.monitors.borrow()[0].1, 2);
+    execute_monitor(&jvm, lock.clone(), false).unwrap();
+    assert_eq!(jvm.monitors.borrow()[0].1, 1);
+    execute_monitor(&jvm, lock.clone(), false).unwrap();
+    assert!(jvm.monitors.borrow().is_empty());
+    execute_monitor(&jvm, lock, false).unwrap();
+    assert!(jvm.pending_exception.borrow().is_some());
+}
+
+#[test]
+fn monitors_reject_null_and_nonreferences() {
+    let jvm = create_runtime_const();
+    for enter in [true, false] {
+        execute_monitor(&jvm, RuntimeValue::Null, enter).unwrap();
+        let exception = jvm.pending_exception.borrow_mut().take().unwrap();
+        assert!(reference_assignable(&jvm, &exception, "java/lang/NullPointerException"));
+        assert!(execute_monitor(&jvm, RuntimeValue::Int(1), enter).is_err());
+        assert!(jvm.monitors.borrow().is_empty());
+    }
+}
+
+#[test]
 fn lookup_switch_alignment_signed_keys_and_offsets() {
     for pc in 4..8 {
         let start = (pc + 4) & !3;

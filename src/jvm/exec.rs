@@ -196,6 +196,8 @@ pub mod opcodes {
     pub const ATHROW:u8 = 0xbf; // athrow
     pub const CHECKCAST:u8 = 0xc0; // checkcast
     pub const INSTANCEOF:u8 = 0xc1; // instanceof
+    pub const MONITORENTER:u8 = 0xc2; // monitorenter
+    pub const MONITOREXIT:u8 = 0xc3; // monitorexit
 }
 
 mod array_types {
@@ -394,6 +396,8 @@ struct RuntimeConst<'a> {
     classes: HashMap<String, JVMClass<'a>>,
     pending_exception: cell::RefCell<Option<RuntimeValue>>,
     interned_strings: cell::RefCell<HashMap<String, rc::Rc<String>>>,
+    // There is one execution thread; counts support reentrant locking.
+    monitors: cell::RefCell<Vec<(RuntimeValue, usize)>>,
 }
 
 fn lookup_class_name(pool: &ConstantPool, index: usize) -> Result<&str, String> {
@@ -403,6 +407,40 @@ fn lookup_class_name(pool: &ConstantPool, index: usize) -> Result<&str, String> 
         }
     }
     Err(format!("invalid class reference {}", index))
+}
+
+fn execute_monitor(jvm: &RuntimeConst, value: RuntimeValue, enter: bool) -> Result<(), String> {
+    // Validate reference operands before attempting an identity comparison.
+    references_equal(&value, &value)?;
+    let exception = if matches!(value, RuntimeValue::Null) {
+        Some("java/lang/NullPointerException")
+    } else {
+        let mut monitors = jvm.monitors.borrow_mut();
+        let index = monitors.iter().position(|(held, _)| references_equal(held, &value).unwrap_or(false));
+        if enter {
+            if let Some(index) = index {
+                monitors[index].1 = monitors[index].1.checked_add(1).ok_or("monitor count overflow")?;
+            } else {
+                monitors.push((value, 1));
+            }
+            None
+        } else if let Some(index) = index {
+            monitors[index].1 -= 1;
+            if monitors[index].1 == 0 {
+                monitors.remove(index);
+            }
+            None
+        } else {
+            Some("java/lang/IllegalMonitorStateException")
+        }
+    };
+    if let Some(name) = exception {
+        let class = jvm.lookup_class(name).ok_or("monitor exception class not found")?;
+        *jvm.pending_exception.borrow_mut() = Some(RuntimeValue::Object(
+            rc::Rc::new(cell::RefCell::new(class.create_object()))
+        ));
+    }
+    Ok(())
 }
 
 fn references_equal(left: &RuntimeValue, right: &RuntimeValue) -> Result<bool, String> {
@@ -1882,6 +1920,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                     dynamic::invoke_concat(constant_pool, index, frame, jvm)?;
                     pc += 5;
                 },
+                opcodes::MONITORENTER | opcodes::MONITOREXIT => {
+                    let value = frame.pop_value_force()?;
+                    execute_monitor(jvm, value, code[pc] == opcodes::MONITORENTER)?;
+                    pc += 1;
+                },
                 opcodes::INSTANCEOF => {
                     let index = make_int16(code[pc + 1], code[pc + 2]) as usize;
                     let target = lookup_class_name(constant_pool, index)?;
@@ -2492,7 +2535,9 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
                            ("java/lang/Exception", "java/lang/Throwable"),
                            ("java/lang/RuntimeException", "java/lang/Exception"),
                            ("java/lang/ClassCastException", "java/lang/RuntimeException"),
-                           ("java/lang/ArithmeticException", "java/lang/RuntimeException")] {
+                           ("java/lang/ArithmeticException", "java/lang/RuntimeException"),
+                           ("java/lang/NullPointerException", "java/lang/RuntimeException"),
+                           ("java/lang/IllegalMonitorStateException", "java/lang/RuntimeException")] {
         let mut class = create_java_lang_object();
         class.class = name.to_string();
         class.super_class = Some(parent.to_string());
@@ -2503,6 +2548,7 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
         classes: classes,
         pending_exception: cell::RefCell::new(None),
         interned_strings: cell::RefCell::new(HashMap::new()),
+        monitors: cell::RefCell::new(Vec::new()),
     }
 }
 
