@@ -18,10 +18,14 @@ pub mod opcodes {
     pub const DCONST1:u8 = 0x0f; // dconst_1
     pub const DLOAD:u8 = 0x18; // dload
     pub const DLOAD0:u8 = 0x26; // dload_0
+    pub const DLOAD1:u8 = 0x27; // dload_1
+    pub const DLOAD2:u8 = 0x28; // dload_2
     pub const DLOAD3:u8 = 0x29; // dload_3
     pub const DALOAD:u8 = 0x31; // daload
     pub const DSTORE:u8 = 0x39; // dstore
     pub const DSTORE0:u8 = 0x47; // dstore_0
+    pub const DSTORE1:u8 = 0x48; // dstore_1
+    pub const DSTORE2:u8 = 0x49; // dstore_2
     pub const DSTORE3:u8 = 0x4a; // dstore_3
     pub const DASTORE:u8 = 0x52; // dastore
     pub const DADD:u8 = 0x63; // dadd
