@@ -1,7 +1,7 @@
 .PHONY: all test
 
 all:
-	cargo build
+	cargo build --release
 
 test:
 	./tests.py
