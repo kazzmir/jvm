@@ -7,17 +7,23 @@ use jvm::exec::*;
 mod debug;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    // iterate through arguments and print each one out
-    /*
-    for arg in args.iter() {
-        println!("{}", arg);
+    let mut class_file = None;
+    let mut options = true;
+    for arg in env::args().skip(1) {
+        if options && arg == "-v" {
+            debug::set_verbose(true);
+        } else if options && arg == "--" {
+            options = false;
+        } else if (options && arg.starts_with('-')) || class_file.is_some() {
+            eprintln!("Usage: jvm [-v] <class-file>");
+            std::process::exit(2);
+        } else {
+            class_file = Some(arg);
+        }
     }
-    */
-    // print just the first argument out, but only if there is at least one argument
-    if args.len() > 1 {
-        if let Err(err) = execute_class_file(&args[1], "main") {
+
+    if let Some(class_file) = class_file {
+        if let Err(err) = execute_class_file(&class_file, "main") {
             println!("Error: {0}", err);
         }
     }

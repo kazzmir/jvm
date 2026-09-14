@@ -7,6 +7,7 @@ use crate::debug;
 use super::data::*;
 
 mod dynamic;
+mod gc;
 mod interface;
 mod arrays;
 
@@ -411,6 +412,7 @@ struct Frame {
 }
 
 struct RuntimeConst<'a> {
+    heap: cell::RefCell<gc::Heap>,
     classes: HashMap<String, JVMClass<'a>>,
     pending_exception: cell::RefCell<Option<RuntimeValue>>,
     interned_strings: cell::RefCell<HashMap<String, rc::Rc<String>>>,
@@ -1307,6 +1309,11 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
 
         let mut pc = 0;
         while pc < code.len() {
+            gc::collect_if_due(jvm, frame);
+            let _call_roots = if matches!(code[pc], opcodes::INVOKESPECIAL | opcodes::INVOKESTATIC
+                | opcodes::INVOKEVIRTUAL | opcodes::INVOKEINTERFACE | opcodes::INVOKEDYNAMIC) {
+                Some(gc::CallRoots::new(&jvm.heap, frame))
+            } else { None };
             // println!("Opcopde {}: 0x{:x}", pc, code[pc]);
             let instruction_pc = pc;
             match code[pc] {
@@ -2533,6 +2540,13 @@ fn do_execute_method(method: &MethodInfo, constant_pool: &ConstantPool, frame: &
                 }
             }
 
+            if let Some(value) = frame.stack.last() {
+                let mut heap = jvm.heap.borrow_mut();
+                heap.observe(value);
+                if matches!(code[instruction_pc], opcodes::NEWARRAY | opcodes::ANEWARRAY | opcodes::MULTIANEWARRAY) {
+                    heap.allocated_array(value);
+                }
+            }
             let exception = jvm.pending_exception.borrow_mut().take();
             if let Some(exception) = exception {
                 let class_name = match &exception {
@@ -2690,6 +2704,7 @@ fn create_runtime_const<'a>() -> RuntimeConst<'a> {
 
     return RuntimeConst{
         classes: classes,
+        heap: cell::RefCell::new(gc::Heap::default()),
         pending_exception: cell::RefCell::new(None),
         interned_strings: cell::RefCell::new(HashMap::new()),
         monitors: cell::RefCell::new(Vec::new()),
