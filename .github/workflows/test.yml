@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.x'
       - name: Build Rust binaries
-        run: cargo build --bins
+        run: cargo build --release --bins
       - name: Run Rust tests
         run: cargo test
       - name: Run JVM integration tests

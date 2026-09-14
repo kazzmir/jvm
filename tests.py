@@ -32,18 +32,14 @@ def compile_java_files(path):
             break
 
     if need_compile:
-        subprocess.call(['javac'] + java_files, cwd=path)
+        subprocess.run(['javac'] + java_files, cwd=path, check=True)
 
 def run_jvm(path):
-    process = subprocess.run(['./jvm', os.path.join(path, 'Main.class')], capture_output=True)
-    if process.returncode != 0:
-        return b'failed to run: ' + process.stderr
+    process = subprocess.run(['./jvm', os.path.join(path, 'Main.class')], capture_output=True, check=True)
     return process.stdout
 
 def run_java(path):
-    process = subprocess.run(['java', '-classpath', path, 'Main'], capture_output=True)
-    if process.returncode != 0:
-        return b'java failed to run: ' + process.stderr
+    process = subprocess.run(['java', '-classpath', path, 'Main'], capture_output=True, check=True)
     return process.stdout
 
 def xterm_color_start(color):
@@ -77,8 +73,10 @@ def do_test(path):
 
     if actual != expected:
         print(f"{colorize('Failure', 'red')} actual={actual} expected={expected}")
+        return False
     else:
         print(colorize("OK", 'green'))
+        return True
 
 def main():
     parser = argparse.ArgumentParser(description='Run JVM tests.')
@@ -89,12 +87,15 @@ def main():
         path = os.path.join('tests', 'test' + args.test)
         if not os.path.isdir(path):
             parser.error(f'test not found: {args.test}')
-        do_test(path)
-        return
+        return 0 if do_test(path) else 1
 
+    passed = True
     for path in sorted(os.listdir('tests')):
         full = os.path.join('tests', path)
         if os.path.isdir(full):
-            do_test(full)
+            if not do_test(full):
+                passed = False
+    return 0 if passed else 1
 
-main()
+if __name__ == '__main__':
+    sys.exit(main())
