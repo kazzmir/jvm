@@ -7,6 +7,7 @@ This is a small, incomplete JVM bytecode interpreter written in Rust (edition 20
 - `src/jvm/data.rs`: class-file parsing, constant pool, method descriptors, code attributes, and exception tables.
 - `src/jvm/exec.rs`: opcode constants, runtime values, frames, interpreter dispatch, class loading, exception propagation, and minimal native Java classes.
 - `src/jvm/exec/tests.rs`: Rust unit tests for stack manipulation.
+- `src/jvm/exec/gc.rs`: single-threaded tracing cycle collector over weak allocation registrations; `gc/tests.rs` verifies reclamation and root preservation.
 - `src/main.rs`: `jvm` CLI entry point.
 - `src/jimage/`: separate `jimage` binary/tooling.
 - `tests.py`: compares this interpreter's stdout against the installed Java JVM.
@@ -31,7 +32,7 @@ git diff --check
 - `make` builds both binaries. `make test` only invokes the Python runner; it does **not** rebuild Rust first.
 - The runner recompiles Java sources when the corresponding top-level `.class` is absent or older. If nested class files are missing/stale, explicitly run `javac tests/testNNN/Main.java`.
 - **Do not trust exit status alone:** `tests.py` prints failures but does not exit nonzero for output mismatches. The JVM CLI also prints interpreter errors to stdout without setting a failure exit code. Inspect the test results.
-- Output comparison is byte-for-byte. Formatting, trailing newlines, and extra stdout matter. Debug logging uses stderr and is enabled in debug builds.
+- Output comparison is byte-for-byte. Formatting, trailing newlines, and extra stdout matter. Debug logging uses stderr and is disabled by default. Pass `-v` to the JVM CLI (`./jvm -v tests/test001/Main.class`) to enable `debug!` output in either debug or release builds.
 
 ## Adding bytecode tests
 
@@ -59,6 +60,9 @@ Naming details:
 - Java `char` is unsigned 16-bit, including surrogate values; use `u16`, not Rust `char`. Byte loads sign-extend; char loads zero-extend. Boolean array stores retain the low bit.
 - Float operations should use `f32`, doubles `f64`. Float-to-integer conversions truncate toward zero, saturate overflow, and convert NaN to zero. Comparison variants differ in their NaN result. Preserve signed zero and infinity behavior.
 - Objects and arrays use shared `Rc<RefCell<...>>` references. Duplicating/loading/returning a reference must preserve identity, not deep-copy its contents.
+- GC runs at bytecode boundaries after 16 MiB of estimated allocation pressure (not process RSS). It marks globals, current locals/operand stack, suspended caller snapshots, pending exceptions, and held monitors. Unreachable objects/reference arrays have their outgoing edges cleared to reclaim cycles through reference counting. Array payload capacities and estimated object overhead drive the budget; this is not a hard heap limit or an allocation-failure retry mechanism.
+- Keep newly exposed object/reference-array values registered with the heap and account for new array payloads. Calls that can execute Java must retain caller roots via `gc::CallRoots`; never collect while Rust-only temporary references are unrooted. Runtime teardown also clears remaining cycles.
+- Run `python3 tests/test039/check_gc.py` to verify >3 GiB of cyclic allocation under a 128 MiB process limit. Check the `./jvm` symlink and rebuild its actual target (debug or release).
 - Doubles and longs occupy **two JVM slots**, but one operand-stack `Vec` entry. Double locals reserve two entries. Stack-manipulation instructions must distinguish category-1 and category-2 values; `duplicate_two_slots` and its tests demonstrate this.
 - Branch offsets are signed and relative to the instruction's starting PC. `goto_w` uses a signed 32-bit offset. Do not narrow the PC to `i16`, even for short branches in large methods.
 - New array value variants must also be handled by debugging, `arraylength`, reference assignability/checkcasts, and `areturn` as appropriate. Check bounds and operand types rather than introducing panics.
