@@ -1,6 +1,6 @@
 JVM bytecode interpreter in Rust
 ```
-$ ./jvm Main.class
+$ ./jvm Hello.class
 Hello world!
 ```
 
