@@ -1,0 +1,29 @@
+name: Build and test
+
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '26'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Build Rust binaries
+        run: cargo build --release --bins
+      - name: Run Rust tests
+        run: cargo test
+      - name: Run JVM integration tests
+        run: |
+          ln -sfn target/release/jvm jvm
+          python3 tests.py

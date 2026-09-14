@@ -31,7 +31,7 @@ git diff --check
 - The test runner invokes `./jvm`, not `cargo run`. In the current workspace, `./jvm` is a symlink to `target/debug/jvm`; rebuilding updates it automatically. Check before replacing an existing executable/link.
 - `make` builds both binaries. `make test` only invokes the Python runner; it does **not** rebuild Rust first.
 - The runner recompiles Java sources when the corresponding top-level `.class` is absent or older. If nested class files are missing/stale, explicitly run `javac tests/testNNN/Main.java`.
-- **Do not trust exit status alone:** `tests.py` prints failures but does not exit nonzero for output mismatches. The JVM CLI also prints interpreter errors to stdout without setting a failure exit code. Inspect the test results.
+- `tests.py` exits nonzero for output mismatches and compilation/process failures, so CI can enforce results. The JVM CLI itself still prints interpreter errors to stdout without setting a failure exit code; check its output when running directly.
 - Output comparison is byte-for-byte. Formatting, trailing newlines, and extra stdout matter. Debug logging uses stderr and is disabled by default. Pass `-v` to the JVM CLI (`./jvm -v tests/test001/Main.class`) to enable `debug!` output in either debug or release builds.
 
 ## Adding bytecode tests
